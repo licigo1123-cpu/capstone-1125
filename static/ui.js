@@ -29,6 +29,15 @@ const post = body => api("/action",{method:"POST",headers:{"Content-Type":"appli
 function setState(data) {
   p=data.project;
   jobs=data.jobs;
+  p.scene_sharing_available=Boolean(p.scene_owners&&p.scene_candidates&&p.scene_groups);
+  const owners=p.scene_owners||{},candidates=p.scene_candidates||{};
+  p.scene_owners=Object.fromEntries(p.shots.map(s=>[s,owners[s]||s]));
+  p.scene_candidates=Object.fromEntries(p.shots.map(s=>[s,candidates[s]||[s]]));
+  p.scene_groups={};
+  for(const shot of p.shots){
+    const owner=p.scene_owners[shot];
+    (p.scene_groups[owner]??=[]).push(shot);
+  }
   localStorage.setItem("paper-studio-project",p.id);
 }
 const send = async (op,other={}) => setState(await post({op,id:p.id,revision:p.revision,...other}));
@@ -85,9 +94,10 @@ function render(){
   }else if(step===1){
     content=Object.entries(p.characters).map(([name,id])=>`<article><h2>${esc(name)}</h2><div class="group">${panel(id+".profile")}${panel(id+".sheet")}</div></article>`).join("") || '<div class="empty">当前分镜均为空镜。</div>';
   }else if(step===2){
-    content=`<section class="card"><h2>场景复用</h2><p class="hint">同地点、同时间段可共用一份环境设定和参考图。需要不同布置的分镜可选择「本镜环境」。</p>
+    content=(p.scene_sharing_available?`<section class="card"><h2>场景复用</h2><p class="hint">同地点、同时间段可共用一份环境设定和参考图。需要不同布置的分镜可选择「本镜环境」。</p>
       ${button("按地点和时间合并场景","group-scenes","",true)}
-      ${p.shots.map(s=>`<label>分镜 ${s.slice(1)} 的环境来源<select data-scene-source="${s}">${p.scene_candidates[s].map(t=>`<option value="${t}" ${p.scene_owners[s]===t?"selected":""}>${t===s?"本镜环境":"共用分镜 "+t.slice(1)+" 的环境"} · ${esc(current(t+".scene").value.place)} · ${esc(current(t+".scene").value.time)}</option>`).join("")}</select></label>`).join("")}</section>`+
+      ${p.shots.map(s=>`<label>分镜 ${s.slice(1)} 的环境来源<select data-scene-source="${s}">${p.scene_candidates[s].map(t=>`<option value="${t}" ${p.scene_owners[s]===t?"selected":""}>${t===s?"本镜环境":"共用分镜 "+t.slice(1)+" 的环境"} · ${esc(current(t+".scene").value.place)} · ${esc(current(t+".scene").value.time)}</option>`).join("")}</select></label>`).join("")}</section>`:
+      '<section class="card"><p>当前服务使用逐镜环境。重启工作台服务后可启用场景复用。</p></section>')+
       Object.entries(p.scene_groups).map(([owner,members])=>`<article><h2>${esc(current(owner+".scene").value.place)} · ${esc(current(owner+".scene").value.time)}</h2>
         <p class="hint">使用分镜 ${members.map(s=>s.slice(1)).join("、")} · 环境来源 ${owner}</p>
         <div class="frame-pair">${panel(owner+".environment")}${panel(owner+".plate")}</div></article>`).join("");
@@ -213,7 +223,8 @@ async function handle(el){
   if(a==="edit"&&!edits.has(k)){message("请先编辑描述或分镜内容");return;}
   await flush();
   if(a==="group-scenes"){
-    await send("group-scenes");message("已合并同地点、同时间段的场景，优先选用已有环境图。");
+    if(p.scene_sharing_available){await send("group-scenes");message("已合并同地点、同时间段的场景，优先选用已有环境图。");}
+    else message("请重启工作台服务以启用场景复用。",true);
   }else if(a==="save-style"){
     message("风格设定已保存，后续图片和视频将使用此风格。");
   }else if(a==="save"){
