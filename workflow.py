@@ -256,7 +256,7 @@ def execute(p, key, note, models, record_task=lambda _: None):
             prompt = (f'第一张图为环境，后续角色三视图按顺序对应{names}。分镜动作：{scene["plot"]}。'
                       f'只画{"开始" if kind == "first" else "结束"}时刻：{scene[kind]}。保持服装、脸型、光向。')
         prompt += "\n整体视觉风格：" + p.get("style", DEFAULT_STYLE) + "。无文字、字幕、气泡、水印。\n" + note
-        v = api.image(model, prompt, refs, wide=kind == "sheet")
+        v = api.image(model, prompt, refs, wide=kind == "sheet", record_task=record_task)
     version(p, key, v, note, model["model"], prompt)
 
 

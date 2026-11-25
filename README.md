@@ -21,7 +21,7 @@ zsh start.command
 | 功能 | 本地 | 远端协议 |
 | --- | --- | --- |
 | 文本 | Ollama，默认 `qwen3.5:4b`，基础地址 `http://127.0.0.1:11434` | OpenAI 兼容 Chat Completions，支持 JSON 对象输出；基础地址包含 `/v1` |
-| 图片 | Apple Silicon 上的 `h3-image-mlx`，支持多张参考图 | OpenAI Images 协议。无参考图调用 `/images/generations`，有参考图以 multipart 将环境及角色图逐张传给 `/images/edits` |
+| 图片 | Apple Silicon 上的 `h3-image-mlx`，支持多张参考图 | OpenAI Images 使用 generations / multipart edits；`muse-image-ext` 自动使用 Muse JSON generations、`aspect_ratio` 和 `image_urls`，保存任务号并轮询结果 |
 | 视频 | MiniMax-H3 MLX，两个 `--image` 分别对应 `first`、`last` | MiniMax H3 V2。基础地址默认 `https://api.minimax.io`，提交后轮询任务，取回实际 MP4 |
 
 已有本地运行时可采用这个目录布局：
@@ -38,6 +38,8 @@ zsh start.command
 - **本地 H3 视频**：按 [minimax-h3-mac](https://github.com/Argus-AiTeam/minimax-h3-mac) 安装运行时，适配版本为 `3fcc9f8c557cf353400b1acf737b985e524a509f`。准备好 FL2VA 和 BF16 Turbo LoRA 后，执行 `zsh scripts/apply_h3_i2v_patch.zsh`。它会检查低内存图生视频和 PIL 参考图处理补丁。参考图处理走 MLX/PIL，避免加载无关的 PyTorch 视频处理器。
 - **本地 H3 图片**：已有运行时可直接复用。首次安装可执行 `zsh scripts/setup_h3_image.zsh`，按提示确认模型许可后下载权重。
 - **自定义路径**：支持 `H3_RUNTIME`、`H3_IMAGE_RUNTIME`、`FFMPEG`、`STUDIO_DATA`。本地视频以 288×512 低内存配置生成，内存预算默认 20 GB，可用 `H3_MEMORY_GB` 调整。实际速度及能否生成 10–15 秒双帧镜头取决于可用统一内存和 Metal 设备。最终导出为 720×1280。
+
+使用 Muse 时，三视图采用 3:2，场景图和首尾帧采用 9:16；最多 9 张参考图，原始文件总计不超过 11 MiB。异步任务号记录在制作任务中，完成后下载 WebP 并转换为项目中的 PNG 素材。接口说明见 [Muse Image API](https://apimart.ai/zh/model/muse-image)。
 
 ## 制作一集
 

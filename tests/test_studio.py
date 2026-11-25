@@ -339,6 +339,67 @@ class StudioTests(unittest.TestCase):
         st.validate(imported)
         self.assertEqual(wf.view(imported)["style"],wf.DEFAULT_STYLE)
 
+    def test_muse_image_ratios_references_and_async_download(self):
+        source=st.DATA/"source.webp"
+        providers.run([providers.FF,"-v","error","-f","lavfi","-i","color=green:s=90x160","-frames:v",1,source])
+        raw=source.read_bytes()
+        names=["a"*64+".webp","b"*64+".webp"]
+        for name in names:
+            st.asset(name).write_bytes(raw)
+        for wide,refs,ratio in [(True,[],"3:2"),(False,[],"9:16"),(False,names,"9:16")]:
+            tasks=[]
+            cfg=dict(mode="api",model="muse-image-ext",url="https://example.test/v1",key="test")
+            responses=[{"data":[{"task_id":"muse-123"}]},{"data":{"status":"processing"}},
+                       {"data":{"status":"completed","result":{"images":[{"url":["https://cdn.example/image.webp"]}]}}},raw]
+            with patch.object(providers,"request",side_effect=responses) as req,patch.object(providers.time,"sleep"):
+                result=providers.image(cfg,"水彩绘本",refs,wide=wide,record_task=tasks.append)
+            submitted=req.call_args_list[0]
+            self.assertEqual(submitted.args[0],"https://example.test/v1/images/generations")
+            body=submitted.args[1]
+            self.assertEqual(body["aspect_ratio"],ratio)
+            self.assertEqual(body["n"],1)
+            self.assertNotIn("size",body)
+            self.assertNotIn("resolution",body)
+            self.assertEqual(body.get("image_urls",[]),[providers.data_url(n) for n in refs])
+            self.assertRegex(submitted.kwargs["extra_headers"]["Idempotency-Key"],r"^[a-f0-9]{32}$")
+            self.assertEqual(req.call_args_list[1].args[0],"https://example.test/v1/tasks/muse-123")
+            self.assertEqual(tasks,["muse-123"])
+            self.assertTrue(st.asset(result).read_bytes().startswith(b"\x89PNG"))
+
+    def test_muse_failure_keeps_task_and_does_not_resubmit(self):
+        cfg=dict(mode="api",model="muse-image-ext",url="https://example.test")
+        tasks=[]
+        with patch.object(providers,"request",side_effect=[{"data":[{"task_id":"muse-fail"}]},
+                          {"data":{"status":"failed","error":{"message":"fixture failure"}}}]) as req:
+            self.assertRaisesRegex(ValueError,"muse-fail",providers.image,cfg,"test",[],record_task=tasks.append)
+        self.assertEqual(tasks,["muse-fail"])
+        self.assertEqual(req.call_count,2)
+        self.assertEqual(req.call_args_list[0].args[0],"https://example.test/v1/images/generations")
+        with patch.object(providers,"request") as req:
+            self.assertRaisesRegex(ValueError,"9 张参考图",providers.muse_image,cfg,"test",["a"]*10,False,tasks.append)
+        req.assert_not_called()
+
+    def test_openai_image_size_and_edit_protocol_remain_supported(self):
+        source=st.DATA/"source.png"
+        providers.run([providers.FF,"-v","error","-f","lavfi","-i","color=blue:s=90x160","-frames:v",1,source])
+        raw=source.read_bytes()
+        name="a"*64+".png"
+        st.asset(name).write_bytes(raw)
+        cfg=dict(mode="api",model="gpt-image-1",url="https://example.test/v1")
+        for refs,wide in [([],True),([name],False)]:
+            with patch.object(providers,"request",side_effect=[{"data":[{"url":"https://cdn.example/image.png"}]},raw]) as req:
+                result=providers.image(cfg,"test",refs,wide=wide)
+            self.assertTrue(st.asset(result).exists())
+            first=req.call_args_list[0]
+            if refs:
+                self.assertTrue(first.args[0].endswith("/images/edits"))
+                self.assertIn(b'name="size"',first.args[1])
+                self.assertIn(b"1024x1536",first.args[1])
+                self.assertIn(b'name="image[]"',first.args[1])
+            else:
+                self.assertEqual(first.args[1]["size"],"1536x1024")
+                self.assertNotIn("aspect_ratio",first.args[1])
+
     def test_calico_rejects_human_features_and_incorrect_coat(self):
         valid=cat_profile("三花猫")
         self.assertIn("黑、白、橘",character_profiles.description("三花猫",valid))
@@ -411,7 +472,7 @@ class StudioTests(unittest.TestCase):
         for s in p["shots"]:
             for f in wf.FIELDS:
                 wf.review(p,s+"."+f,True,"")
-        def make_image(cfg,prompt,refs,wide=False):
+        def make_image(cfg,prompt,refs,wide=False,record_task=lambda _:None):
             self.assertIn(p["style"],prompt)
             if "第一张图" in prompt:
                 self.assertEqual(len(refs),2)

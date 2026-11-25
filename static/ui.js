@@ -154,7 +154,7 @@ const localNames={text:"本地 Qwen · Ollama",image:"本地 MiniMax H3 Image",v
 function settingsPanel(){
   modal("<h2>连接设置</h2>"+Object.entries(config).map(([kind,row])=>{
     const mode=row.mode, d=row[mode], remote=mode==="api", editable=remote||kind==="text";
-    const apiName={text:"Chat Completions API",image:"OpenAI Images API",video:"MiniMax H3 V2 API"}[kind];
+    const apiName={text:"Chat Completions API",image:"OpenAI Images / Muse API",video:"MiniMax H3 V2 API"}[kind];
     return `<fieldset><legend>${serviceNames[kind]}</legend><label>来源<select data-mode="${kind}"><option value="local" ${remote?"":"selected"}>${localNames[kind]}</option>
     <option value="api" ${remote?"selected":""}>${apiName}</option></select></label>
     ${editable?["url","model",...(remote?["key"]:[])].map(f=>`<label>${{url:"基础地址",model:"模型名称",key:"API Key"}[f]}<input type="${f==="key"?"password":"text"}" data-cfg="${kind}" data-f="${f}" value="${esc(d[f]||"")}" placeholder="${f==="key"&&d.has_key?"已配置，留空沿用":""}"></label>`).join(""):"<p>使用本机已安装的 MLX 运行时和权重。</p>"}</fieldset>`;

@@ -71,12 +71,12 @@ def selected():
     return {k: {**d[d["mode"]], "mode": d["mode"]} for k, d in settings().items()}
 
 
-def request(url, body=None, key="", typ="application/json", binary=False):
+def request(url, body=None, key="", typ="application/json", binary=False, extra_headers=None):
     if urlsplit(url).scheme not in ("http", "https"):
         raise ValueError("服务地址无效")
     if body is not None and not isinstance(body, bytes):
         body = json.dumps(body, ensure_ascii=False).encode()
-    headers = {"Content-Type": typ}
+    headers = {"Content-Type": typ, **(extra_headers or {})}
     if key:
         headers["Authorization"] = "Bearer " + key
     try:
@@ -159,7 +159,33 @@ def multipart(fields, refs):
     return bytes(out), "multipart/form-data; boundary=" + boundary
 
 
-def image(cfg, prompt, refs, wide=False):
+def muse_image(cfg, prompt, refs, wide, record_task):
+    if len(refs) > 9 or sum(st.asset(name).stat().st_size for name in refs) > 11 * 1024**2:
+        raise ValueError("Muse 最多支持 9 张参考图，原始文件总计不超过 11 MiB")
+    base = cfg["url"].rstrip("/")
+    if not base.endswith("/v1"):
+        base += "/v1"
+    body = dict(model=cfg["model"], prompt=prompt, n=1, aspect_ratio="3:2" if wide else "9:16")
+    if refs:
+        body["image_urls"] = [data_url(name) for name in refs]
+    response = request(base + "/images/generations", body, cfg.get("key"),
+                       extra_headers={"Idempotency-Key": uuid4().hex})
+    task = str(response["data"][0]["task_id"])
+    record_task(task)
+    for _ in range(180):
+        result = request(base + "/tasks/" + quote(task, safe=""), key=cfg.get("key"))["data"]
+        if result["status"] == "completed":
+            url = result["result"]["images"][0]["url"]
+            if isinstance(url, list):
+                url = url[0]
+            return {"url": url}
+        if result["status"] in ("failed", "cancelled", "canceled"):
+            raise ValueError(f"Muse 任务 {task} 失败：{result.get('error') or result['status']}")
+        time.sleep(2)
+    raise ValueError(f"Muse 任务 {task} 查询超时，任务号已保存，请先核对原任务结果")
+
+
+def image(cfg, prompt, refs, wide=False, record_task=lambda _: None):
     with tempfile.TemporaryDirectory(dir=st.DATA) as td:
         out = Path(td) / "image.png"
         if cfg["mode"] == "local":
@@ -172,13 +198,16 @@ def image(cfg, prompt, refs, wide=False):
         else:
             if not wide:
                 prompt += "。纵向构图，重要人物及动作放在画幅中央的 9:16 安全区。"
-            fields = dict(model=cfg["model"], prompt=prompt, size="1536x1024" if wide else "1024x1536", n=1)
-            if refs:
-                data, typ = multipart(fields, refs)
-                res = request(cfg["url"]+"/images/edits", data, cfg.get("key"), typ)
+            if cfg["model"].lower().startswith("muse-image"):
+                output = muse_image(cfg, prompt, refs, wide, record_task)
             else:
-                res = request(cfg["url"]+"/images/generations", fields, cfg.get("key"))
-            output = res["data"][0]
+                fields = dict(model=cfg["model"], prompt=prompt, size="1536x1024" if wide else "1024x1536", n=1)
+                if refs:
+                    data, typ = multipart(fields, refs)
+                    res = request(cfg["url"]+"/images/edits", data, cfg.get("key"), typ)
+                else:
+                    res = request(cfg["url"]+"/images/generations", fields, cfg.get("key"))
+                output = res["data"][0]
             raw = base64.b64decode(output["b64_json"],validate=True) if output.get("b64_json") else request(output["url"],binary=True)
             src = Path(td)/"input"
             src.write_bytes(raw)
