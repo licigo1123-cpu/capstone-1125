@@ -192,6 +192,62 @@ class StudioTests(unittest.TestCase):
             self.assertEqual(providers.plan_story(cfg,"instruction","story"),plan())
         self.assertEqual(req.call_args.args[1]["response_format"],{"type":"json_object"})
 
+    def test_profile_generation_and_revision_scope(self):
+        p=wf.new()
+        p["story"]="橘白色小猫戴着蓝色项圈，在黄昏的花店门口等待。"
+        wf.install_plan(p,plan())
+        for s in p["shots"]:
+            for field in ("scene","cast"):
+                wf.review(p,s+"."+field,True,"")
+        target=wf.character("小猫")+".profile"
+        description="小型橘白短毛猫，圆脸，绿色眼睛，佩戴蓝色项圈。"
+        models={"text":{"model":"test"}}
+        with patch.object(providers,"text",return_value={"name":"小猫","description":description}) as text:
+            wf.execute(p,target,"",models)
+            instruction=text.call_args.args[1]
+            initial=json.loads(text.call_args.args[2])
+            self.assertEqual(initial,{"name":"小猫","other_characters":[],"story":p["story"],"note":""})
+            self.assertIn("只为 name 指定的单个角色",instruction)
+            self.assertIn("角色外观范围",instruction)
+            self.assertIn("场景地点、时间、光线、背景、剧情",instruction)
+            wf.execute(p,target,"项圈改成红色",models)
+            revision=json.loads(text.call_args.args[2])
+            self.assertEqual(revision["previous"],description)
+            self.assertEqual(revision["note"],"项圈改成红色")
+            self.assertNotIn("scenes",revision)
+            self.assertEqual(text.call_args.args[1],instruction)
+        self.assertEqual(wf.value(p,target),description)
+        self.assertEqual(len(p["nodes"][target]["versions"]),2)
+
+    def test_profile_character_identity_isolation(self):
+        p=wf.new()
+        p["story"]="小禾是黑色短发女孩，穿黄色外套。爷爷留白胡须，穿蓝色长衫。"
+        rows=plan()
+        for row in rows["shots"]:
+            row["cast"]=["小禾","爷爷"]
+        wf.install_plan(p,rows)
+        for s in p["shots"]:
+            for field in ("scene","cast"):
+                wf.review(p,s+"."+field,True,"")
+        targets={n:wf.character(n)+".profile" for n in ("小禾","爷爷")}
+        descriptions={"小禾":"黑色短发女孩，穿黄色外套。","爷爷":"白胡须老人，穿蓝色长衫。"}
+        def describe(cfg,instruction,material):
+            payload=json.loads(material)
+            name=payload["name"]
+            self.assertEqual(payload["other_characters"],[n for n in targets if n!=name])
+            self.assertNotIn("scenes",payload)
+            return {"name":name,"description":descriptions[name]}
+        with patch.object(providers,"text",side_effect=describe):
+            for target in targets.values():
+                wf.execute(p,target,"",{"text":{"model":"test"}})
+        for name,target in targets.items():
+            self.assertEqual(wf.value(p,target),descriptions[name])
+        wrong={"name":"爷爷","description":descriptions["爷爷"]}
+        with patch.object(providers,"text",return_value=wrong) as text:
+            self.assertRaisesRegex(ValueError,"姓名与当前角色",wf.execute,p,targets["小禾"],"",{"text":{"model":"test"}})
+            self.assertEqual(text.call_count,2)
+        self.assertEqual(len(p["nodes"][targets["小禾"]]["versions"]),1)
+
     def test_minimax_and_local_video_bind_both_anchors(self):
         keys=["a"*64+".png","b"*64+".png"]
         for k in keys:
@@ -235,7 +291,7 @@ class StudioTests(unittest.TestCase):
                            "-f","lavfi","-i","sine=frequency=330","-t",seconds,"-c:v","libx264","-c:a","aac",src])
             return st.persist(src,"mp4")
         order=[char+".profile",char+".sheet"]+[s+"."+k for s in p["shots"] for k in ("environment","plate","first","last","video")]
-        with patch.object(providers,"text",return_value={"description":"角色或环境描述"}),patch.object(providers,"image",side_effect=make_image),patch.object(providers,"video",side_effect=make_video):
+        with patch.object(providers,"text",return_value={"name":"小猫","description":"角色或环境描述"}),patch.object(providers,"image",side_effect=make_image),patch.object(providers,"video",side_effect=make_video):
             for k in order:
                 wf.execute(p,k,"测试意见",models)
                 wf.review(p,k,True,"同意使用")

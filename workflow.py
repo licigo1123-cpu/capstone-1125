@@ -187,15 +187,24 @@ def execute(p, key, note, models, record_task=lambda _: None):
         prompt = note
     elif kind in ("profile", "environment"):
         profile = kind == "profile"
-        shots = ([s for s in p["shots"] if owner in map(character, value(p, s + ".cast"))]
-                 if profile else [owner])
-        payload = dict(scenes=[visual(p, s) for s in shots], note=note)
+        payload = dict(note=note)
         if profile:
-            payload.update(name=next(n for n in cast_names(p) if character(n) == owner), story=p["story"])
+            names = cast_names(p)
+            name = next(n for n in names if character(n) == owner)
+            payload.update(name=name, other_characters=[n for n in names if n != name], story=p["story"])
+        else:
+            payload["scenes"] = [visual(p, owner)]
         if key in p["nodes"]:
             payload["previous"] = value(p, key)
         prompt = skill("02-character" if profile else "03-environment")
-        v = api.text(model, prompt, json.dumps(payload, ensure_ascii=False))["description"]
+        for attempt in range(2 if profile else 1):
+            result = api.text(model, prompt, json.dumps(payload, ensure_ascii=False))
+            if not profile or result.get("name") == name:
+                v = result["description"]
+                break
+            if attempt:
+                raise ValueError(f"角色设定返回的姓名与当前角色「{name}」不一致，请重新生成")
+            prompt += f'\n本次只生成「{name}」，JSON 中 name 必须逐字为「{name}」。'
     elif kind == "film":
         model = {"model": "FFmpeg"}
         prompt = "按分镜顺序拼接，720×1280，24 fps"
