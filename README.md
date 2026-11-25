@@ -21,8 +21,8 @@ zsh start.command
 | 功能 | 本地 | 远端协议 |
 | --- | --- | --- |
 | 文本 | Ollama，默认 `qwen3.5:4b`，基础地址 `http://127.0.0.1:11434` | OpenAI 兼容 Chat Completions，支持 JSON 对象输出；基础地址包含 `/v1` |
-| 图片 | Apple Silicon 上的 `h3-image-mlx`，支持多张参考图 | OpenAI Images 使用 generations / multipart edits；`muse-image-ext` 自动使用 Muse JSON generations、`aspect_ratio` 和 `image_urls`，保存任务号并轮询结果 |
-| 视频 | MiniMax-H3 MLX，一个 `--image` 配合 `--anchor first` | MiniMax 官方 H3 V2，或 APIMart Seedance；仅参考首帧，提交后保存任务号并轮询，下载实际 MP4 |
+| 图片 | 可以连接本地图片生成模型| OpenAI Images 使用 generations / multipart edits；`muse-image-ext` 自动使用 Muse JSON generations、`aspect_ratio` 和 `image_urls`，保存任务号并轮询结果 |
+| 视频 | 可以连接本地视频生成模型 | MiniMax 官方 H3 V2，或 APIMart Seedance；仅参考首帧，提交后保存任务号并轮询，下载实际 MP4 |
 
 APIMart 视频基础地址填写 `https://api.apimart.ai/v1`。视频只参考一张已审核的首帧，可选 `seedance-1-0-pro-fast` / `seedance-1-0-pro-quality`（每镜 2–12 整秒），或 `seedance-2.0` / `seedance-2.0-fast` / `seedance-2.0-mini`（每镜 4–15 整秒）。程序不会自动更换付费模型或缩短镜头。模型与时长校验通过后，仅上传首帧至 APIMart 获取临时公共链接（显式选择保留 3 天），以 `image_with_roles` 的单个 `first_frame` 提交并保持 9:16。项目中仍保存原始图片和实际视频文件。
 
