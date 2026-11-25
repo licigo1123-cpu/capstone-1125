@@ -145,14 +145,14 @@ def data_url(name):
     return "data:image/" + fmt + ";base64," + base64.b64encode(st.asset(name).read_bytes()).decode()
 
 
-def multipart(fields, refs):
+def multipart(fields, refs, file_field="image[]"):
     boundary = uuid4().hex
     out = bytearray()
     for k, v in fields.items():
         out.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode())
     for name in refs:
         mime = {"png":"image/png","jpg":"image/jpeg","webp":"image/webp"}[name.split(".")[-1]]
-        out.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="image[]"; filename="{name}"\r\nContent-Type: {mime}\r\n\r\n'.encode())
+        out.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}"; filename="{name}"\r\nContent-Type: {mime}\r\n\r\n'.encode())
         out.extend(st.asset(name).read_bytes())
         out.extend(b"\r\n")
     out.extend(f"--{boundary}--\r\n".encode())
@@ -216,6 +216,61 @@ def image(cfg, prompt, refs, wide=False, record_task=lambda _: None):
         return st.persist(out, "png")
 
 
+def video_api_base(url, version):
+    """Replace a terminal API version, retaining any reverse-proxy path prefix."""
+    parts = urlsplit(url.strip())
+    if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment:
+        raise ValueError("视频基础地址需要有效的 HTTP(S) 地址，不能包含查询参数或片段")
+    path = re.sub(r"/v[12]$", "", parts.path.rstrip("/"))
+    return parts._replace(path=path + "/" + version).geturl()
+
+
+def apimart_video(cfg, prompt, refs, seconds, record_task):
+    model = cfg["model"]
+    if model == "seedance-1-0-pro-fast":
+        raise ValueError("seedance-1-0-pro-fast 仅支持首帧，不支持本工作台的首尾帧生成。"
+                         "请在连接设置中选择 seedance-1-0-pro-quality（每镜 2–12 秒）"
+                         "或 seedance-2.0（每镜 4–15 秒）；本次未提交视频生成任务。")
+    if model == "seedance-1-0-pro-quality":
+        low, high, ratio_field = 2, 12, "aspect_ratio"
+    elif model in ("seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini"):
+        low, high, ratio_field = 4, 15, "size"
+    else:
+        raise ValueError("APIMart 视频目前支持 seedance-1-0-pro-quality、seedance-2.0、"
+                         "seedance-2.0-fast、seedance-2.0-mini；请核对连接设置中的模型名称。")
+    if type(seconds) is not int or not low <= seconds <= high:
+        raise ValueError(f"{model} 每镜支持 {low}–{high} 整秒，请修改分镜时长后重新审核；本次未提交视频生成任务。")
+    if len(refs) != 2:
+        raise ValueError("视频生成需要已审核的首帧和尾帧")
+    for name in refs:
+        if st.asset(name).stat().st_size > 30 * 1024**2:
+            raise ValueError("APIMart 参考图不能超过 30 MiB，请缩小图片后重试")
+    base = video_api_base(cfg["url"], "v1")
+    images = []
+    for role, name in zip(("first_frame", "last_frame"), refs):
+        data, typ = multipart({}, [name], file_field="file")
+        url = request(base + "/uploads/images?retention_days=3", data, cfg.get("key"), typ).get("url")
+        if not isinstance(url, str) or urlsplit(url).scheme not in ("http", "https"):
+            raise ValueError("APIMart 参考图上传未返回有效地址；本次未提交视频生成任务。")
+        images.append(dict(role=role, url=url))
+    body = dict(model=model, prompt=prompt, duration=seconds, resolution="720p", image_with_roles=images)
+    body[ratio_field] = "9:16"
+    response = request(base + "/videos/generations", body, cfg.get("key"))
+    task = str(response["data"][0]["task_id"])
+    record_task(task)
+    for _ in range(450):
+        result = request(base + "/tasks/" + quote(task, safe=""), key=cfg.get("key"))["data"]
+        if result["status"] == "completed":
+            url = result["result"]["videos"][0]["url"]
+            if isinstance(url, list):
+                url = url[0]
+            return request(url, binary=True)
+        if result["status"] in ("failed", "canceled", "cancelled", "expired"):
+            raise ValueError(f"APIMart 视频任务 {task} 失败：{result.get('error') or result['status']}")
+        time.sleep(5)
+    raise ValueError(f"APIMart 视频查询超时，远端任务号 {task} 已保存，请先核对原任务结果")
+
+
 def video(cfg, prompt, refs, seconds, record_task):
     with tempfile.TemporaryDirectory(dir=st.DATA) as td:
         out = Path(td)/"shot.mp4"
@@ -228,15 +283,18 @@ def video(cfg, prompt, refs, seconds, record_task):
                  "--image",st.asset(refs[0]),"--anchor","first","--image",st.asset(refs[1]),"--anchor","last",
                  "--duration",seconds,"--steps",5,"--memory-limit-gb",os.getenv("H3_MEMORY_GB","20"),
                  "--require-muxed-mp4","--output",out], H3)
+        elif (urlsplit(cfg["url"]).hostname or "").lower() == "api.apimart.ai" or cfg["model"].lower().startswith("seedance-"):
+            out.write_bytes(apimart_video(cfg, prompt, refs, seconds, record_task))
         else:
+            base = video_api_base(cfg["url"], "v2")
             content = [{"type":"text","text":prompt}]
             for role, name in zip(("first_frame","last_frame"), refs):
                 content.append({"type":"image_url","role":role,"image_url":{"url":data_url(name)}})
-            task = request(cfg["url"]+"/v2/video_generation", dict(model=cfg["model"], content=content,
+            task = request(base+"/video_generation", dict(model=cfg["model"], content=content,
                            duration=seconds, resolution="768P", ratio="9:16"), cfg.get("key"))["task_id"]
             record_task(str(task))
             for _ in range(450):
-                res = request(cfg["url"]+"/v2/query/video_generation/"+quote(str(task),safe=""),key=cfg.get("key"))["task"]
+                res = request(base+"/query/video_generation/"+quote(str(task),safe=""),key=cfg.get("key"))["task"]
                 if res["status"] == "succeeded":
                     out.write_bytes(request(res["content"]["url"], binary=True))
                     break

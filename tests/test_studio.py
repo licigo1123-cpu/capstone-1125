@@ -602,19 +602,92 @@ class StudioTests(unittest.TestCase):
             st.asset(k).write_bytes(k.encode())
         mp4=b"\x00\x00\x00\x18ftypisom"+b"test"
         task=[]
-        with patch.object(providers,"request",side_effect=[{"task_id":"m1"},{"task":{"status":"succeeded","content":{"url":"https://cdn.example/clip"}}},mp4]) as req:
-            result=providers.video(dict(mode="api",model="MiniMax-H3",url="https://example.test"),"剧情",keys,12,task.append)
-            body=req.call_args_list[0].args[1]
-            self.assertEqual([x["role"] for x in body["content"][1:]],["first_frame","last_frame"])
-            self.assertNotEqual(body["content"][1]["image_url"],body["content"][2]["image_url"])
-            self.assertEqual((task,body["ratio"],body["duration"]),(["m1"],"9:16",12))
-            self.assertTrue(st.asset(result).exists())
+        for suffix in ("", "/", "/v1", "/v1/", "/v2", "/v2/"):
+            task.clear()
+            with self.subTest(suffix=suffix), patch.object(providers,"request",side_effect=[{"task_id":"m1"},{"task":{"status":"succeeded","content":{"url":"https://cdn.example/clip"}}},mp4]) as req:
+                result=providers.video(dict(mode="api",model="MiniMax-H3",url="https://example.test"+suffix),"剧情",keys,12,task.append)
+                body=req.call_args_list[0].args[1]
+                self.assertEqual(req.call_args_list[0].args[0],"https://example.test/v2/video_generation")
+                self.assertEqual(req.call_args_list[1].args[0],"https://example.test/v2/query/video_generation/m1")
+                self.assertEqual([x["role"] for x in body["content"][1:]],["first_frame","last_frame"])
+                self.assertNotEqual(body["content"][1]["image_url"],body["content"][2]["image_url"])
+                self.assertEqual((task,body["ratio"],body["duration"]),(["m1"],"9:16",12))
+                self.assertTrue(st.asset(result).exists())
         def fake_run(cmd,cwd):
             self.assertEqual([cmd[i+1] for i,x in enumerate(cmd) if x=="--anchor"],["first","last"])
             self.assertEqual([cmd[i+1] for i,x in enumerate(cmd) if x=="--image"],list(map(st.asset,keys)))
             Path(cmd[-1]).write_bytes(mp4)
         with patch.object(providers,"run",side_effect=fake_run):
             providers.video({"mode":"local"},"剧情",keys,12,task.append)
+
+    def test_apimart_video_uploads_both_frames_and_polls_its_own_protocol(self):
+        keys=["a"*64+".png","b"*64+".png"]
+        for key in keys:
+            st.asset(key).write_bytes(key.encode())
+        mp4=b"\x00\x00\x00\x18ftypisom"+b"test"
+        for model, seconds, field in (("seedance-1-0-pro-quality",12,"aspect_ratio"),
+                                      ("seedance-2.0",15,"size"),
+                                      ("seedance-2.0-fast",15,"size"),
+                                      ("seedance-2.0-mini",15,"size")):
+            for suffix in ("", "/v1/", "/v2"):
+                recorded=[]
+                responses=[{"url":"https://cdn.example/first.png"},{"url":"https://cdn.example/last.png"},
+                           {"data":[{"task_id":"task/a"}]},{"data":{"status":"processing"}},
+                           {"data":{"status":"completed","result":{"videos":[{"url":["https://cdn.example/video.mp4"]}]}}},mp4]
+                cfg=dict(mode="api",model=model,url="https://api.apimart.ai"+suffix,key="TEST-ONLY")
+                with self.subTest(model=model,suffix=suffix), patch.object(providers,"request",side_effect=responses) as req, patch.object(providers.time,"sleep"):
+                    result=providers.video(cfg,"分镜剧情",keys,seconds,recorded.append)
+                self.assertEqual(st.asset(result).read_bytes(),mp4)
+                self.assertEqual(recorded,["task/a"])
+                for i in (0,1):
+                    args=req.call_args_list[i].args
+                    self.assertEqual(args[0],"https://api.apimart.ai/v1/uploads/images?retention_days=3")
+                    self.assertIn(b'name="file"',args[1])
+                    self.assertIn(keys[i].encode(),args[1])
+                    self.assertNotIn(b'image[]',args[1])
+                    self.assertEqual(args[2],"TEST-ONLY")
+                    self.assertIn("boundary=",args[3])
+                self.assertEqual(req.call_args_list[2].args[0],"https://api.apimart.ai/v1/videos/generations")
+                body=req.call_args_list[2].args[1]
+                self.assertEqual((body["model"],body["duration"],body[field],body["resolution"]),(model,seconds,"9:16","720p"))
+                self.assertEqual(body["prompt"],"分镜剧情")
+                self.assertEqual(body["image_with_roles"],[{"role":"first_frame","url":"https://cdn.example/first.png"},
+                                                         {"role":"last_frame","url":"https://cdn.example/last.png"}])
+                self.assertNotIn("ratio",body)
+                self.assertNotIn("content",body)
+                self.assertEqual(req.call_args_list[3].args[0],"https://api.apimart.ai/v1/tasks/task%2Fa")
+                self.assertEqual(req.call_args_list[5].kwargs,{"binary":True})
+
+    def test_apimart_video_rejects_incompatible_models_and_duration_before_upload(self):
+        for model,seconds,error in (("seedance-1-0-pro-fast",12,"仅支持首帧"),
+                                    ("seedance-1-0-pro-quality",15,"2–12"),
+                                    ("seedance-2.0",16,"4–15"),
+                                    ("seedance-2.0",12.5,"整秒"),
+                                    ("not-a-supported-model",12,"模型名称")):
+            cfg=dict(mode="api",model=model,url="https://api.apimart.ai/v1")
+            with self.subTest(model=model,seconds=seconds),patch.object(providers,"request") as req:
+                self.assertRaisesRegex(ValueError,error,providers.video,cfg,"剧情",["missing-first","missing-last"],seconds,lambda _:None)
+                req.assert_not_called()
+        self.assertEqual(providers.video_api_base("https://proxy.test/api/v1/","v2"),"https://proxy.test/api/v2")
+        for url in ("file:///tmp/video","https://example.test/v1?key=secret","https://example.test/#v1"):
+            self.assertRaises(ValueError,providers.video_api_base,url,"v2")
+
+    def test_apimart_video_failures_keep_remote_task_and_do_not_resubmit(self):
+        cfg=dict(mode="api",model="seedance-1-0-pro-quality",url="https://api.apimart.ai/v1")
+        keys=["a"*64+".png","b"*64+".png"]
+        for key in keys:
+            st.asset(key).write_bytes(b"fixture")
+        for status in ("failed","cancelled","expired","processing"):
+            recorded=[]
+            result={"data":{"status":status,"error":{"message":"generation failed"}}}
+            responses=[{"url":"https://cdn.example/first"},{"url":"https://cdn.example/last"},{"data":[{"task_id":"saved-id"}]}]+[result]*450
+            with self.subTest(status=status),patch.object(providers,"request",side_effect=responses) as req,patch.object(providers.time,"sleep"):
+                self.assertRaisesRegex(ValueError,"saved-id",providers.video,cfg,"剧情",keys,12,recorded.append)
+            self.assertEqual(recorded,["saved-id"])
+            self.assertEqual(sum(c.args[0].endswith("/videos/generations") for c in req.call_args_list),1)
+        with patch.object(providers,"request",return_value={"url":""}) as req:
+            self.assertRaisesRegex(ValueError,"上传未返回有效地址",providers.video,cfg,"剧情",keys,12,lambda _:None)
+            self.assertEqual(req.call_count,1)
 
     def test_full_production_export_and_archive(self):
         p=wf.new("测试短片")

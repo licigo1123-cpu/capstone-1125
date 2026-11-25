@@ -22,7 +22,11 @@ zsh start.command
 | --- | --- | --- |
 | 文本 | Ollama，默认 `qwen3.5:4b`，基础地址 `http://127.0.0.1:11434` | OpenAI 兼容 Chat Completions，支持 JSON 对象输出；基础地址包含 `/v1` |
 | 图片 | Apple Silicon 上的 `h3-image-mlx`，支持多张参考图 | OpenAI Images 使用 generations / multipart edits；`muse-image-ext` 自动使用 Muse JSON generations、`aspect_ratio` 和 `image_urls`，保存任务号并轮询结果 |
-| 视频 | MiniMax-H3 MLX，两个 `--image` 分别对应 `first`、`last` | MiniMax H3 V2。基础地址默认 `https://api.minimax.io`，提交后轮询任务，取回实际 MP4 |
+| 视频 | MiniMax-H3 MLX，两个 `--image` 分别对应 `first`、`last` | MiniMax 官方 H3 V2，或 APIMart Seedance 首尾帧接口；提交后保存任务号并轮询，下载实际 MP4 |
+
+APIMart 视频基础地址填写 `https://api.apimart.ai/v1`。本工作台需要首尾两帧，可选 `seedance-1-0-pro-quality`（每镜 2–12 整秒），或 `seedance-2.0` / `seedance-2.0-fast` / `seedance-2.0-mini`（每镜 4–15 整秒）。`seedance-1-0-pro-fast` 仅支持首帧，程序会在提交前提示更换模型；不会自动更换付费模型、丢弃尾帧或缩短镜头。模型与时长校验通过后，首尾帧上传至 APIMart 获取临时公共链接（显式选择保留 3 天），以 `image_with_roles` 提交并保持 9:16。项目中仍保存原始图片和实际视频文件。
+
+MiniMax 官方基础地址填写 `https://api.minimax.io`，模型 `MiniMax-H3`。视频地址末尾的 `/v1` 或 `/v2` 会按所用协议处理，避免重复拼成 `/v1/v2/video_generation`。APIMart 与 MiniMax 官方使用各自的账户和 API Key。
 
 已有本地运行时可采用这个目录布局：
 
@@ -77,7 +81,7 @@ zsh start.command
 
 `skills/` 中的三个项目技能分别对应分镜、角色和环境。运行时加载对应的 `SKILL.md` 指令，由工作流校验结构、时长及审核依赖。设计参考 [shuohao-skills](https://github.com/eternityspring/shuohao-skills) 中的 [novel-storyboard](https://github.com/eternityspring/shuohao-skills/tree/main/skills/novel-storyboard)、[novel-characters](https://github.com/eternityspring/shuohao-skills/tree/main/skills/novel-characters) 和 [novel-art](https://github.com/eternityspring/shuohao-skills/tree/main/skills/novel-art)，按本项目的首尾帧流程编写。
 
-接口依据：[MiniMax H3 创建任务](https://platform.minimax.io/docs/api-reference/video-generation-v2-create)、[查询任务](https://platform.minimax.io/docs/api-reference/video-generation-v2-query)、[OpenAI 图片生成与编辑](https://developers.openai.com/api/docs/guides/image-generation)。
+接口依据：[MiniMax H3 创建任务](https://platform.minimax.io/docs/api-reference/video-generation-v2-create)、[查询任务](https://platform.minimax.io/docs/api-reference/video-generation-v2-query)、[APIMart Seedance 1.0](https://docs.apimart.ai/en/api-reference/videos/doubao/generation.md)、[Seedance 2.0](https://docs.apimart.ai/en/api-reference/videos/seedance-2-0/generation.md)、[参考图上传](https://docs.apimart.ai/en/api-reference/uploads/images.md)、[任务查询](https://docs.apimart.ai/en/api-reference/tasks/status.md)、[OpenAI 图片生成与编辑](https://developers.openai.com/api/docs/guides/image-generation)。
 
 ## 验证
 
