@@ -39,8 +39,6 @@ MiniMax 官方基础地址填写 `https://api.minimax.io`，模型 `MiniMax-H3`�
 ```
 
 - **Qwen**：安装并启动 Ollama，拉取所选模型，例如 `ollama pull qwen3.5:4b`。已有相邻模型目录时，Mac 启动脚本会尝试复用。
-- **本地 H3 视频**：按 [minimax-h3-mac](https://github.com/Argus-AiTeam/minimax-h3-mac) 安装运行时，适配版本为 `3fcc9f8c557cf353400b1acf737b985e524a509f`。准备好 FL2VA 和 BF16 Turbo LoRA 后，执行 `zsh scripts/apply_h3_i2v_patch.zsh`。它会检查低内存图生视频和 PIL 参考图处理补丁。参考图处理走 MLX/PIL，避免加载无关的 PyTorch 视频处理器。
-- **本地 H3 图片**：已有运行时可直接复用。首次安装可执行 `zsh scripts/setup_h3_image.zsh`，按提示确认模型许可后下载权重。
 - **自定义路径**：支持 `H3_RUNTIME`、`H3_IMAGE_RUNTIME`、`FFMPEG`、`STUDIO_DATA`。本地视频以 288×512 低内存配置生成，内存预算默认 20 GB，可用 `H3_MEMORY_GB` 调整。实际速度及能否生成 10–15 秒首帧参考镜头取决于可用统一内存和 Metal 设备。最终导出为 720×1280。
 
 使用 Muse 时，三视图采用 3:2，场景图和首帧采用 9:16；最多 9 张参考图，原始文件总计不超过 11 MiB。异步任务号记录在制作任务中，完成后下载 WebP 并转换为项目中的 PNG 素材。接口说明见 [Muse Image API](https://apimart.ai/zh/model/muse-image)。
