@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>纸幕 · 漫剧制作台</title><link rel="stylesheet" href="/style.css"><script src="/ui.js" defer></script>
+</head>
+<body>
+<header><div class="brand"><span class="mark" aria-hidden="true">◩</span>纸幕 <small>漫剧制作台</small></div>
+<div class="toolbar"><button data-a="settings">连接设置</button><button data-a="import">导入项目</button><button data-a="projects">历史项目</button><button class="primary" data-a="save">保存项目</button></div></header>
+<input type="file" id="upload" accept=".zip" hidden>
+<div class="layout"><aside><h2>制作流程</h2><nav id="steps" aria-label="制作步骤"></nav><div class="format"><b>9:16</b> 竖屏漫剧<br><small>目标片长约 1 分钟</small></div></aside>
+<main><div class="meta"><input aria-label="项目名称" id="title" maxlength="120"><span id="count"></span></div>
+<div id="message" role="status" aria-live="polite"></div><section id="work"></section></main></div>
+<dialog id="dialog"><form method="dialog"><button class="close" aria-label="关闭">关闭</button></form><div id="panel"></div></dialog>
+</body></html>

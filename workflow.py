@@ -1,0 +1,236 @@
+"""Typed project document. Every reviewed output records its exact upstream versions."""
+import copy
+import hashlib
+import json
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+from uuid import uuid4
+
+SKILLS = Path(__file__).parent / "skills"
+MEDIA = re.compile(r"[a-f0-9]{64}\.(png|jpg|webp|mp4)")
+FIELDS = ("scene", "cast", "dialogue")
+TIMES = ("白天", "黄昏", "夜晚")
+
+
+def skill(name):
+    document = (SKILLS / name / "SKILL.md").read_text(encoding="utf-8")
+    return document.split("\n---\n", 1)[1].strip()
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def new(title="未命名漫剧"):
+    return dict(schema_version=1, id=uuid4().hex, title=title, story="", ratio="9:16",
+                shots=[], nodes={}, updated=now(), revision=0)
+
+
+def words(s):
+    if not isinstance(s, str) or not s.strip():
+        raise ValueError("文字字段不能为空")
+    return s.strip()
+
+
+def clean(kind, v):
+    if kind == "scene":
+        row = {k: words(v[k]) for k in ("place", "time", "plot", "first", "last")}
+        if row["time"] not in TIMES or type(v["seconds"]) is not int or not 10 <= v["seconds"] <= 15:
+            raise ValueError("时段应为白天、黄昏或夜晚，每镜时长为 10–15 整秒")
+        return dict(row, seconds=v["seconds"])
+    if kind in ("cast", "dialogue"):
+        if not isinstance(v, list):
+            raise ValueError("角色和对白需要使用数组")
+        if kind == "cast":
+            return list(dict.fromkeys(words(name) for name in v))
+        return [{f: words(line[f]) for f in ("speaker", "text")} for line in v]
+    if kind in ("profile", "environment"):
+        return words(v)
+    if not isinstance(v, str) or not MEDIA.fullmatch(v):
+        raise ValueError("素材标识无效")
+    if (kind in ("video", "film")) != v.endswith(".mp4"):
+        raise ValueError("素材类型与步骤不符")
+    return v
+
+
+def character(name):
+    return hashlib.sha256(name.encode()).hexdigest()[:24]
+
+
+def cast_names(p):
+    return list(dict.fromkeys(n for s in p["shots"] for n in value(p, s + ".cast")))
+
+
+def value(p, k):
+    return p["nodes"][k]["versions"][-1]["value"]
+
+
+def dependencies(p, key):
+    owner, kind = key.split(".")
+    if kind in FIELDS:
+        return []
+    if kind == "profile":
+        return [s + "." + f for s in p["shots"]
+                if owner in map(character, value(p, s + ".cast")) for f in ("cast", "scene")]
+    if kind == "sheet":
+        return [owner + ".profile"]
+    if kind == "environment":
+        return [owner + ".scene"]
+    if kind == "plate":
+        return [owner + ".environment"]
+    if kind in ("first", "last"):
+        return [owner + "." + f for f in ("scene", "cast", "plate")] + [
+            character(n) + ".sheet" for n in value(p, owner + ".cast")]
+    if kind == "video":
+        return [owner + "." + f for f in ("first", "last", "scene", "dialogue")]
+    if key == "final.film":
+        return [s + ".video" for s in p["shots"]]
+    raise ValueError("未知制作步骤")
+
+
+def allowed(p, key):
+    if key == "final.film" and p["shots"]:
+        return
+    owner, kind = key.split(".")
+    if owner in p["shots"] and kind in (*FIELDS, "environment", "plate", "first", "last", "video"):
+        return
+    if kind in ("profile", "sheet") and owner in map(character, cast_names(p)):
+        return
+    raise ValueError("目标不属于当前分镜")
+
+
+def stamps(p, key):
+    return {d: len(p["nodes"].get(d, {}).get("versions", [])) for d in dependencies(p, key)}
+
+
+def status(p, k):
+    node = p["nodes"].get(k)
+    if not node:
+        return "待制作"
+    current = node["versions"][-1]
+    if current["inputs"] != stamps(p, k) or any(status(p, d) != "已确认" for d in current["inputs"]):
+        return "上游已变更"
+    return current["review"]
+
+
+def ready(p, k):
+    allowed(p, k)
+    for d in dependencies(p, k):
+        if status(p, d) != "已确认":
+            raise ValueError("请先审核上游素材或分镜字段：" + d)
+
+
+def version(p, k, v, note="", source="手动", prompt=None):
+    ready(p, k)
+    kind = k.split(".")[1]
+    node = p["nodes"].setdefault(k, {"versions": []})
+    node["versions"].append(dict(value=clean(kind, v), inputs=stamps(p, k), at=now(),
+                                 source=source, note=note, review="待审核", reviews=[], prompt=prompt))
+
+
+def review(p, k, approve, note):
+    ready(p, k)
+    if k not in p["nodes"] or status(p, k) == "上游已变更":
+        raise ValueError("请先按当前输入制作新版本")
+    v = p["nodes"][k]["versions"][-1]
+    v["review"] = "已确认" if approve else "需修改"
+    v["reviews"].append(dict(at=now(), state=v["review"], note=note))
+
+
+def install_plan(p, obj):
+    if p["shots"]:
+        raise ValueError("已有分镜，请在新项目中重新拆镜")
+    rows = obj["shots"]
+    if not isinstance(rows, list) or not 4 <= len(rows) <= 6:
+        raise ValueError("分镜数应为 4–6")
+    validated = [{f: clean(f, row[f]) for f in FIELDS} for row in rows]
+    if sum(row["scene"]["seconds"] for row in validated) != 60:
+        raise ValueError("分镜时长总和应为 60 秒")
+    for i, row in enumerate(validated, 1):
+        s = f"S{i:02}"
+        p["shots"].append(s)
+        for f, v in row.items():
+            version(p, s + "." + f, v, source="分镜分析")
+
+
+def visual(p, owner):
+    scene = dict(value(p, owner + ".scene"))
+    for line in value(p, owner + ".dialogue"):
+        for field in ("plot", "first", "last"):
+            scene[field] = scene[field].replace(line["text"], "")
+    return scene
+
+
+def execute(p, key, note, models, record_task=lambda _: None):
+    import providers as api
+    if key == "plan":
+        if p["shots"]:
+            raise ValueError("已有分镜，请新建项目后重新拆镜")
+        story = words(p["story"])
+        instruction = skill("01-storyboard")
+        for attempt in range(2):
+            try:
+                install_plan(p, api.text(models["text"], instruction, story))
+                return
+            except (ValueError, KeyError, TypeError) as ex:
+                if attempt:
+                    raise ValueError(f"分镜结构校验失败：{ex}") from ex
+                instruction += f"\n上次结构校验失败：{ex}。请按规范重新输出完整对象。"
+    ready(p, key)
+    owner, kind = key.split(".")
+    model = models["text"]
+    if kind in FIELDS:
+        words(note)
+        v = api.text(model, '按建议只修改当前字段，保持输入类型和字段结构。输出 {"value":修改后的字段值}。',
+                     json.dumps(dict(value=value(p, key), story=p["story"], note=note), ensure_ascii=False))["value"]
+        prompt = note
+    elif kind in ("profile", "environment"):
+        profile = kind == "profile"
+        shots = ([s for s in p["shots"] if owner in map(character, value(p, s + ".cast"))]
+                 if profile else [owner])
+        payload = dict(scenes=[visual(p, s) for s in shots], note=note)
+        if profile:
+            payload.update(name=next(n for n in cast_names(p) if character(n) == owner), story=p["story"])
+        if key in p["nodes"]:
+            payload["previous"] = value(p, key)
+        prompt = skill("02-character" if profile else "03-environment")
+        v = api.text(model, prompt, json.dumps(payload, ensure_ascii=False))["description"]
+    elif kind == "film":
+        model = {"model": "FFmpeg"}
+        prompt = "按分镜顺序拼接，720×1280，24 fps"
+        v = api.join([value(p, s + ".video") for s in p["shots"]])
+    elif kind == "video":
+        model = models["video"]
+        scene = visual(p, owner)
+        prompt = f'{scene["plot"]}。由{scene["first"]}过渡至{scene["last"]}，保持人物与场景连续。'
+        dialogue = value(p, owner + ".dialogue")
+        if dialogue:
+            prompt += "音轨对白（不要显示字幕）：" + "；".join(x["speaker"] + "：" + x["text"] for x in dialogue)
+        prompt += "\n" + note
+        v = api.video(model, prompt, [value(p, owner + "." + f) for f in ("first", "last")],
+                      scene["seconds"], record_task)
+    else:
+        model = models["image"]
+        refs = []
+        if kind == "sheet":
+            prompt = value(p, owner + ".profile") + "。同一角色的全身正面、侧面、背面三视图，并排，白底。"
+        elif kind == "plate":
+            prompt = value(p, owner + ".environment") + "。只画无人空景，无人物、动物、肢体或人影。"
+        else:
+            scene = visual(p, owner)
+            names = value(p, owner + ".cast")
+            refs = [value(p, owner + ".plate"), *[value(p, character(n) + ".sheet") for n in names]]
+            prompt = (f'第一张图为环境，后续角色三视图按顺序对应{names}。分镜动作：{scene["plot"]}。'
+                      f'只画{"开始" if kind == "first" else "结束"}时刻：{scene[kind]}。保持服装、脸型、光向。')
+        prompt += "\n漫画插画，无文字、字幕、气泡、水印。\n" + note
+        v = api.image(model, prompt, refs, wide=kind == "sheet")
+    version(p, key, v, note, model["model"], prompt)
+
+
+def view(p):
+    out = copy.deepcopy(p)
+    out["characters"] = {n: character(n) for n in cast_names(p)}
+    for k, node in out["nodes"].items():
+        node["status"] = status(p, k)
+    return out
