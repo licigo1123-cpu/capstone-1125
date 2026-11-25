@@ -64,6 +64,8 @@ def action(body):
             if p["shots"] and p["story"] != body["story"]:
                 raise ValueError("已拆镜的项目保留原文，新故事请新建项目")
             p["story"] = str(body["story"])
+            if "style" in body:
+                p["style"] = wf.words(body["style"])
         elif op == "generate":
             if k == "plan":
                 if p["shots"] or not p["story"].strip():
@@ -85,6 +87,8 @@ def action(body):
         elif op == "restore":
             wf.ready(p, k)
             old = p["nodes"][k]["versions"][int(body["index"])]
+            if k.split(".")[1] in wf.STYLED_MEDIA and old.get("style", wf.DEFAULT_STYLE) != p.get("style", wf.DEFAULT_STYLE):
+                raise ValueError("历史素材的风格与当前设定不同，请按当前风格重新制作")
             if old["inputs"] != wf.stamps(p, k):
                 raise ValueError("历史版本的上游输入已经变化，请按当前参考重新制作")
             wf.version(p, k, old["value"], note, "恢复历史版本", old["prompt"])
@@ -167,7 +171,7 @@ class Handler(BaseHTTPRequestHandler):
                     st.pack(p, f)
                     return self.stream(f, f.tell(), "application/zip","comic-project.zip")
             if path == "/storyboard":
-                return self.reply(dict(ratio=p["ratio"], shots=[dict(id=s, **{f:wf.value(p,s+"."+f)
+                return self.reply(dict(ratio=p["ratio"], style=p.get("style", wf.DEFAULT_STYLE), shots=[dict(id=s, **{f:wf.value(p,s+"."+f)
                                   for f in wf.FIELDS[:2]}) for s in p["shots"]],
                                   dialogue={s:wf.value(p,s+".dialogue") for s in p["shots"]}))
             self.send_error(404)

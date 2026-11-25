@@ -12,6 +12,8 @@ SKILLS = Path(__file__).parent / "skills"
 MEDIA = re.compile(r"[a-f0-9]{64}\.(png|jpg|webp|mp4)")
 FIELDS = ("scene", "cast", "dialogue")
 TIMES = ("白天", "黄昏", "夜晚")
+DEFAULT_STYLE = "漫画插画"
+STYLED_MEDIA = ("sheet", "plate", "first", "last", "video")
 
 
 def skill(name):
@@ -24,7 +26,7 @@ def now():
 
 
 def new(title="未命名漫剧"):
-    return dict(schema_version=1, id=uuid4().hex, title=title, story="", ratio="9:16",
+    return dict(schema_version=1, id=uuid4().hex, title=title, story="", style=DEFAULT_STYLE, ratio="9:16",
                 shots=[], nodes={}, updated=now(), revision=0)
 
 
@@ -110,6 +112,8 @@ def status(p, k):
     if not node:
         return "待制作"
     current = node["versions"][-1]
+    if k.split(".")[1] in STYLED_MEDIA and current.get("style", DEFAULT_STYLE) != p.get("style", DEFAULT_STYLE):
+        return "上游已变更"
     if current["inputs"] != stamps(p, k) or any(status(p, d) != "已确认" for d in current["inputs"]):
         return "上游已变更"
     return current["review"]
@@ -128,6 +132,8 @@ def version(p, k, v, note="", source="手动", prompt=None):
     node = p["nodes"].setdefault(k, {"versions": []})
     node["versions"].append(dict(value=clean(kind, v), inputs=stamps(p, k), at=now(),
                                  source=source, note=note, review="待审核", reviews=[], prompt=prompt))
+    if kind in STYLED_MEDIA:
+        node["versions"][-1]["style"] = p.get("style", DEFAULT_STYLE)
 
 
 def review(p, k, approve, note):
@@ -233,6 +239,7 @@ def execute(p, key, note, models, record_task=lambda _: None):
         if dialogue:
             prompt += "音轨对白（不要显示字幕）：" + "；".join(x["speaker"] + "：" + x["text"] for x in dialogue)
         prompt += "\n" + note
+        prompt += "\n整体视觉风格：" + p.get("style", DEFAULT_STYLE)
         v = api.video(model, prompt, [value(p, owner + "." + f) for f in ("first", "last")],
                       scene["seconds"], record_task)
     else:
@@ -248,13 +255,14 @@ def execute(p, key, note, models, record_task=lambda _: None):
             refs = [value(p, owner + ".plate"), *[value(p, character(n) + ".sheet") for n in names]]
             prompt = (f'第一张图为环境，后续角色三视图按顺序对应{names}。分镜动作：{scene["plot"]}。'
                       f'只画{"开始" if kind == "first" else "结束"}时刻：{scene[kind]}。保持服装、脸型、光向。')
-        prompt += "\n漫画插画，无文字、字幕、气泡、水印。\n" + note
+        prompt += "\n整体视觉风格：" + p.get("style", DEFAULT_STYLE) + "。无文字、字幕、气泡、水印。\n" + note
         v = api.image(model, prompt, refs, wide=kind == "sheet")
     version(p, key, v, note, model["model"], prompt)
 
 
 def view(p):
     out = copy.deepcopy(p)
+    out.setdefault("style", DEFAULT_STYLE)
     out["characters"] = {n: character(n) for n in cast_names(p)}
     for k, node in out["nodes"].items():
         node["status"] = status(p, k)

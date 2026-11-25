@@ -74,7 +74,9 @@ function render(){
   const head=s=>`<h2>分镜 ${s.slice(1)} · ${esc(current(s+".scene").value.place)}</h2>`;
   let content="";
   if(step===0){
-    content=`<section class="card"><h2>剧本原文</h2><textarea class="story" id="story" aria-label="剧本原文" ${p.shots.length?"readonly":""} placeholder="粘贴故事或小说原文……">${esc(edits.get("story")??p.story)}</textarea>
+    content=`<section class="card"><h2>风格设定</h2><textarea id="style" aria-label="风格设定" rows="3" placeholder="例如：水彩绘本风格，柔和低饱和配色，手绘纸张质感……">${esc(edits.get("style")??p.style??"漫画插画")}</textarea>
+      <p class="hint">用于角色三视图、场景图、首尾关键帧和视频。修改风格后，相关已有素材需重新制作。</p><div class="actions">${button("保存风格","save-style")}</div></section>
+      <section class="card"><h2>剧本原文</h2><textarea class="story" id="story" aria-label="剧本原文" ${p.shots.length?"readonly":""} placeholder="粘贴故事或小说原文……">${esc(edits.get("story")??p.story)}</textarea>
       <div class="actions">${p.shots.length?`<a class="button" download="storyboard.json" href="/storyboard?id=${p.id}">下载分镜与对白 JSON</a>`:button("拆分为分镜","generate","plan",true)}
       <small>每镜 10–15 秒</small></div></section>`+
       p.shots.map(s=>`<article class="card">${head(s)}<div class="group">${["scene","cast","dialogue"].map(f=>panel(s+"."+f)).join("")}</div></article>`).join("");
@@ -127,9 +129,9 @@ function fieldValue(key,v){
   return v;
 }
 async function flush() {
-  if(edits.has("title")||edits.has("story")){
-    await send("save",{title:edits.get("title")??p.title,story:edits.get("story")??p.story});
-    edits.delete("title");edits.delete("story");
+  if(edits.has("title")||edits.has("story")||edits.has("style")){
+    await send("save",{title:edits.get("title")??p.title,story:edits.get("story")??p.story,style:edits.get("style")??p.style??"漫画插画"});
+    edits.delete("title");edits.delete("story");edits.delete("style");
   }
   for(const [key,v] of [...edits]){
     await send("edit",{target:key,value:fieldValue(key,v),note:notes.get(key)||""});
@@ -166,7 +168,7 @@ async function projects(){
 }
 document.addEventListener("input",e=>{
   const el=e.target,{key,field,note,cfg,f}=el.dataset;
-  if(el.id==="story"||el.id==="title")edits.set(el.id,el.value);
+  if(el.id==="story"||el.id==="title"||el.id==="style")edits.set(el.id,el.value);
   if(key){
     if(kindOf(key)==="scene")edits.set(key,{...localValue(key),[field]:field==="seconds"?Number(el.value):el.value});
     else edits.set(key,el.value);
@@ -193,7 +195,9 @@ async function handle(el){
   }
   if(a==="edit"&&!edits.has(k)){message("请先编辑描述或分镜内容");return;}
   await flush();
-  if(a==="save"){
+  if(a==="save-style"){
+    message("风格设定已保存，后续图片和视频将使用此风格。");
+  }else if(a==="save"){
     const link=document.createElement("a");link.href="/package?id="+p.id;link.download="comic-project.zip";link.click();
     message("项目已保存，正在下载包含历史素材的项目包。");
   }else if(a==="generate"){

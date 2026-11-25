@@ -99,6 +99,7 @@ class StudioTests(unittest.TestCase):
             self.assertEqual(latest["jobs"][0]["status"],"完成")
             self.assertEqual(model.call_count,2)
         bundle=json.loads(self.http("GET","/storyboard?id="+p["id"])[1])
+        self.assertEqual(bundle["style"],wf.DEFAULT_STYLE)
         self.assertNotIn("dialogue",bundle["shots"][0])
         self.assertEqual(bundle["dialogue"]["S01"][0]["speaker"],"旁白")
 
@@ -292,6 +293,52 @@ class StudioTests(unittest.TestCase):
             self.assertEqual(revised["note"],"改成冷色灯光")
         self.assertEqual(len(p["nodes"]["S02.environment"]["versions"]),2)
 
+    def test_style_legacy_media_invalidation_and_restore(self):
+        p=wf.new()
+        wf.install_plan(p,plan())
+        for s in p["shots"]:
+            for field in wf.FIELDS:
+                wf.review(p,s+"."+field,True,"")
+        char=wf.character("小猫")
+        for key in [char+".profile",char+".sheet"]+[s+"."+kind for s in p["shots"]
+                   for kind in ("environment","plate","first","last","video")]+["final.film"]:
+            kind=key.split(".")[1]
+            val="外观与环境" if kind in ("profile","environment") else "a"*64+(".mp4" if kind in ("film","video") else ".png")
+            wf.version(p,key,val)
+            wf.review(p,key,True,"")
+        # Documents created before style support retain the original illustration default.
+        del p["style"]
+        for node in p["nodes"].values():
+            for v in node["versions"]:
+                v.pop("style",None)
+        self.assertEqual(wf.status(p,"final.film"),"已确认")
+        self.assertEqual(wf.view(p)["style"],wf.DEFAULT_STYLE)
+        p["style"]="水彩绘本，柔和配色"
+        self.assertEqual(wf.status(p,char+".profile"),"已确认")
+        self.assertEqual(wf.status(p,"S01.environment"),"已确认")
+        for key in (char+".sheet","S01.plate","S01.first","S01.last","S01.video","final.film"):
+            self.assertEqual(wf.status(p,key),"上游已变更")
+        self.assertRaises(ValueError,wf.review,p,char+".sheet",True,"")
+        with st.db() as c:
+            st.save(c,p,fresh=True)
+        self.assertRaisesRegex(ValueError,"历史素材的风格",app.action,
+                               dict(op="restore",id=p["id"],revision=p["revision"],target=char+".sheet",index=0))
+        wf.version(p,char+".sheet","b"*64+".png")
+        self.assertEqual(p["nodes"][char+".sheet"]["versions"][-1]["style"],p["style"])
+
+    def test_style_save_and_project_package(self):
+        p=app.action({"op":"new"})["project"]
+        style="赛璐璐动画，清晰线条，低饱和暖色调"
+        out=app.action(dict(op="save",id=p["id"],revision=p["revision"],title=p["title"],story="小猫",style=style))
+        self.assertEqual(out["project"]["style"],style)
+        code,data=self.http("GET","/package?id="+p["id"])
+        self.assertEqual(code,200)
+        imported=st.unpack(BytesIO(data))
+        self.assertEqual(imported["style"],style)
+        del imported["style"]
+        st.validate(imported)
+        self.assertEqual(wf.view(imported)["style"],wf.DEFAULT_STYLE)
+
     def test_calico_rejects_human_features_and_incorrect_coat(self):
         valid=cat_profile("三花猫")
         self.assertIn("黑、白、橘",character_profiles.description("三花猫",valid))
@@ -356,6 +403,7 @@ class StudioTests(unittest.TestCase):
 
     def test_full_production_export_and_archive(self):
         p=wf.new("测试短片")
+        p["style"]="水彩绘本，柔和低饱和配色"
         p["story"]="小猫在花店等到了主人。"
         wf.install_plan(p,plan())
         models={k:{"model":"test double"} for k in ("text","image","video")}
@@ -364,6 +412,7 @@ class StudioTests(unittest.TestCase):
             for f in wf.FIELDS:
                 wf.review(p,s+"."+f,True,"")
         def make_image(cfg,prompt,refs,wide=False):
+            self.assertIn(p["style"],prompt)
             if "第一张图" in prompt:
                 self.assertEqual(len(refs),2)
                 self.assertNotIn("花店要关门了",prompt)
@@ -371,6 +420,7 @@ class StudioTests(unittest.TestCase):
             providers.run([providers.FF,"-v","error","-f","lavfi","-i","color=green:s=90x160","-frames:v",1,img])
             return st.persist(img,"png")
         def make_video(cfg,prompt,refs,seconds,remote):
+            self.assertIn(p["style"],prompt)
             self.assertEqual(len(refs),2)
             src=st.DATA/"clip.mp4"
             providers.run([providers.FF,"-v","error","-f","lavfi","-i","color=green:s=90x160:r=24",

@@ -105,6 +105,7 @@ def validate(p):
     if p.get("schema_version") != 1 or p.get("ratio") != "9:16":
         raise ValueError("需要版本 1 的 9:16 项目包")
     wf.words(p["title"])
+    wf.words(p.get("style", wf.DEFAULT_STYLE))
     if not isinstance(p["story"], str) or not isinstance(p["shots"], list) or not isinstance(p["nodes"], dict):
         raise ValueError("项目结构不完整")
     if len(p["shots"]) not in (0, 4, 5, 6) or p["shots"] != [f"S{i+1:02}" for i in range(len(p["shots"]))]:
@@ -121,6 +122,8 @@ def validate(p):
         if not isinstance(n["versions"], list) or not n["versions"]:
             raise ValueError("缺少节点版本")
         for v in n["versions"]:
+            if "style" in v:
+                wf.words(v["style"])
             wf.clean(k.split(".")[1], v["value"])
             if (v["review"] not in ("待审核", "已确认", "需修改") or not isinstance(v["reviews"], list)
                     or not isinstance(v["inputs"], dict)):
