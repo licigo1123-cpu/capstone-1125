@@ -10,6 +10,43 @@ INSTRUCTION = """你是竖屏漫剧导演。用户消息就是待改编的故事
 对白写“角色：原话”，多句用“；角色：原话”连接，无对白写无。每镜对应10至15秒，总时长由程序分配为60秒。
 """
 EMPTY = {"", "无", "无对白", "无角色", "空镜", "—", "-"}
+QUOTES = [("“", "”"), ('"', '"'), ("「", "」"), ("‘", "’"), ("'", "'")]
+
+
+def unquote(text):
+    text = text.strip()
+    while len(text) > 1 and (text[0], text[-1]) in QUOTES:
+        text = text[1:-1].strip()
+    return text
+
+
+def no_dialogue(text):
+    text = unquote(text).lower()
+    if len(text) > 1 and (text[0], text[-1]) in [("（", "）"), ("(", ")")]:
+        text = text[1:-1].strip()
+    return text in EMPTY or text in {"无台词", "无对话", "无对白。", "none", "null", "n/a", "--"} or bool(
+        re.fullmatch(r"(?:无|无对白|无台词|无对话)[。.!！]?(?:[（(].*[）)])?", text))
+
+
+def dialogue_lines(dialogue):
+    dialogue = unquote(dialogue)
+    if no_dialogue(dialogue):
+        return []
+    lines = []
+    # Models sometimes use HTML breaks inside a Markdown table cell.
+    for part in re.split(r"<br\s*/?>|[；;]\s*(?=[^：:；;]{1,40}[:：])", dialogue, flags=re.I):
+        part = unquote(part)
+        if no_dialogue(part):
+            continue
+        match = re.fullmatch(r"\s*([^：:]{1,40})[:：]\s*(.+)", part)
+        if match:
+            speaker, text = (unquote(v) for v in match.groups())
+        else:
+            speaker, text = "待确认", part
+        if not speaker or not text:
+            speaker, text = "待确认", part
+        lines.append(dict(speaker=speaker, text=text))
+    return lines
 
 
 def parse(reply):
@@ -33,17 +70,9 @@ def parse(reply):
         idx = re.fullmatch(r"(?:第|分镜|镜头|S)?\s*0*(\d+)\s*(?:镜|号|[.、])?", number, re.I)
         if not idx or int(idx[1]) != len(shots) + 1:
             raise ValueError(f"分镜表第 {lineno} 行镜号应为 {len(shots) + 1}")
-        lines = []
-        if dialogue not in EMPTY:
-            for part in re.split(r"[；;]\s*(?=[^：:；;]{1,40}[:：])", dialogue):
-                match = re.fullmatch(r"\s*([^：:]{1,40})[:：]\s*(.+)", part)
-                if not match:
-                    raise ValueError(f"镜头 {number} 的对白缺少说话人或台词")
-                speaker, text = (v.strip() for v in match.groups())
-                if len(text) > 1 and (text[0], text[-1]) in [("“", "”"), ('"', '"'), ("「", "」")]:
-                    text = text[1:-1].strip()
-                lines.append(dict(speaker=speaker, text=text))
-                plot, first, last = (v.replace(text, "").strip() for v in (plot, first, last))
+        lines = dialogue_lines(dialogue)
+        for line in lines:
+            plot, first, last = (v.replace(line["text"], "").strip() for v in (plot, first, last))
         shots.append(dict(scene=dict(place=place, time=period, plot=plot, first=first, last=last),
                           cast=[] if cast in EMPTY else [v.strip() for v in re.split(r"[、,，；;]", cast) if v.strip()],
                           dialogue=lines))

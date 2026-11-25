@@ -146,6 +146,30 @@ class StudioTests(unittest.TestCase):
                      self.shot_table().replace("门边蹲坐 |", "门边 | 蹲坐 |")):
             self.assertRaises(ValueError,storyboard.parse,text)
 
+    def test_dialogue_variants_and_missing_speaker(self):
+        for text in ("无", "（无对白）", "无台词", "无（仅环境音）", "None", "—", ""):
+            self.assertEqual(storyboard.dialogue_lines(text),[],text)
+        for text in ('“等我一下！”', "等我一下！", "店主：", '店主：“”', "：等我一下！"):
+            lines=storyboard.dialogue_lines(text)
+            self.assertEqual(lines,[dict(speaker="待确认",text=storyboard.unquote(text))])
+        self.assertEqual(storyboard.dialogue_lines('“店主：欢迎；小猫：喵。”'),[
+            dict(speaker="店主",text="欢迎"),dict(speaker="小猫",text="喵。")])
+        self.assertEqual(storyboard.dialogue_lines("店主：‘欢迎’<br/>旁白：小猫停了下来。"),[
+            dict(speaker="店主",text="欢迎"),dict(speaker="旁白",text="小猫停了下来。")])
+
+    def test_fifth_shot_unlabelled_dialogue_preserves_plan(self):
+        table=self.shot_table(5)
+        last=table.splitlines()[-1]
+        for dialogue, expected in [("（无对白）", []), ("明天还来这里。", [dict(speaker="待确认",text="明天还来这里。")])]:
+            row=last.rsplit("|",2)
+            modified=table.rsplit("\n",1)[0]+"\n"+row[0]+"| "+dialogue+" |"
+            p=wf.new()
+            wf.install_plan(p,storyboard.parse(modified))
+            self.assertEqual(len(p["shots"]),5)
+            self.assertEqual(wf.value(p,"S05.dialogue"),expected)
+            self.assertEqual(wf.status(p,"S05.dialogue"),"待审核")
+            st.validate(p)
+
     def test_bad_local_output_retries_without_partial_plan(self):
         cfg=dict(mode="local", model="qwen3.5:4b", url="http://127.0.0.1:11434")
         p=wf.new()

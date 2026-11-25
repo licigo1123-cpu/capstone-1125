@@ -44,7 +44,9 @@ function editor(key) {
     input(key,"seconds","时长（秒）",v.seconds)+input(key,"plot","动作与运镜",v.plot,3)+
     input(key,"first","开始时刻",v.first,2)+input(key,"last","结束时刻",v.last,2);
   if (kind==="cast") return input(key,"cast","角色名，每行一位",Array.isArray(v)?v.join("\n"):v,3);
-  if (kind==="dialogue") return input(key,"dialogue","每行一句「说话人：台词」",Array.isArray(v)?v.map(x=>x.speaker+"："+x.text).join("\n"):v,4);
+  if (kind==="dialogue") return (Array.isArray(v)&&v.some(x=>x.speaker==="待确认")?
+    '<p class="hint">部分台词的说话人待确认，请核对原文并修改后审核。</p>':"")+
+    input(key,"dialogue","每行一句「说话人：台词」",Array.isArray(v)?v.map(x=>x.speaker+"："+x.text).join("\n"):v,4);
   return input(key,"description","描述",v || "",4);
 }
 function panel(key) {
