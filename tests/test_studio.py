@@ -14,12 +14,20 @@ import providers
 import storage as st
 import workflow as wf
 import storyboard
+import character_profiles
 
 
 def plan():
     return {"shots": [{"scene":dict(place="花店",time="黄昏",plot="小猫走到花架旁", first="门边蹲坐",
                                     last="花架前停下",seconds=15), "cast":["小猫"],
                        "dialogue":[{"speaker":"旁白","text":"花店要关门了。"}]} for _ in range(4)]}
+
+
+def cat_profile(name="小猫"):
+    return dict(name=name,species="猫",attributes={"体型":"小型猫，四足，体态匀称",
+                "毛色与花纹":"黑、白、橘三色不规则毛块" if "三花" in name else "橘白色短毛",
+                "头部特征":"圆脸，绿色眼睛，三角形耳朵", "四肢与尾巴":"四肢纤细，长尾巴",
+                "服饰与配饰":"蓝色项圈"})
 
 
 class Request:
@@ -200,13 +208,13 @@ class StudioTests(unittest.TestCase):
             for field in ("scene","cast"):
                 wf.review(p,s+"."+field,True,"")
         target=wf.character("小猫")+".profile"
-        description="小型橘白短毛猫，圆脸，绿色眼睛，佩戴蓝色项圈。"
+        description=character_profiles.description("小猫",cat_profile())
         models={"text":{"model":"test"}}
-        with patch.object(providers,"text",return_value={"name":"小猫","description":description}) as text:
+        with patch.object(providers,"text",return_value=cat_profile()) as text:
             wf.execute(p,target,"",models)
             instruction=text.call_args.args[1]
             initial=json.loads(text.call_args.args[2])
-            self.assertEqual(initial,{"name":"小猫","other_characters":[],"story":p["story"],"note":"",
+            self.assertEqual(initial,{"name":"小猫","species":"猫","other_characters":[],"story":p["story"],"note":"",
                                       "storyboard":[dict(shot=s,action=wf.visual(p,s)["plot"]) for s in p["shots"]]})
             self.assertIn("只为 name 指定的单个角色",instruction)
             self.assertIn("角色外观范围",instruction)
@@ -266,6 +274,48 @@ class StudioTests(unittest.TestCase):
         self.assertTrue(all(set(row)=={"shot","action"} for row in payload["storyboard"]))
         self.assertIn("storyboard",text.call_args.args[1])
 
+    def test_calico_rejects_human_features_and_incorrect_coat(self):
+        valid=cat_profile("三花猫")
+        self.assertIn("黑、白、橘",character_profiles.description("三花猫",valid))
+        for field,text in [("体型","158cm，肩窄腰细，少女感比例"),
+                           ("头部特征","鹅蛋脸，黑色长直发和齐刘海"),
+                           ("服饰与配饰","百褶裙，手腕红绳，帆布画夹"),
+                           ("毛色与花纹","深褐色虎斑纹，腹部纯白"),
+                           ("头部特征","黄昏逆光，路灯暖黄光")]:
+            bad=copy.deepcopy(valid)
+            bad["attributes"][field]=text
+            self.assertRaises(ValueError,character_profiles.description,"三花猫",bad)
+        bad=copy.deepcopy(valid)
+        bad["description"]="少女和小猫的混合外观"
+        self.assertRaises(ValueError,character_profiles.description,"三花猫",bad)
+
+    def test_animal_profile_retries_and_discards_polluted_context(self):
+        p=wf.new()
+        p["story"]="黑色长发少女喂了一只三花猫，小猫身上有黑白橘三色斑块。"
+        rows=plan()
+        for row in rows["shots"]:
+            row["cast"]=["少女","三花猫"]
+        wf.install_plan(p,rows)
+        for s in p["shots"]:
+            for field in ("scene","cast"):
+                wf.review(p,s+"."+field,True,"")
+        key=wf.character("三花猫")+".profile"
+        polluted="158cm的少女感体型，鹅蛋脸，黑色长直发，百褶裙。物种：三花猫（Tabby）。"
+        wf.version(p,key,polluted)
+        wrong=cat_profile("三花猫")
+        wrong["attributes"]["头部特征"]="少女的黑色长直发"
+        with patch.object(providers,"text",side_effect=[wrong,cat_profile("三花猫")]) as model:
+            wf.execute(p,key,"",{"text":{"model":"test"}})
+        self.assertEqual(model.call_count,2)
+        self.assertNotIn("previous",json.loads(model.call_args_list[0].args[2]))
+        self.assertIn("未通过校验",model.call_args.args[1])
+        self.assertNotIn("少女",wf.value(p,key))
+        self.assertEqual(len(p["nodes"][key]["versions"]),2)
+        before=copy.deepcopy(p)
+        with patch.object(providers,"text",return_value=wrong):
+            self.assertRaisesRegex(ValueError,"混入无关特征",wf.execute,p,key,"",{"text":{"model":"test"}})
+        self.assertEqual(p,before)
+
     def test_minimax_and_local_video_bind_both_anchors(self):
         keys=["a"*64+".png","b"*64+".png"]
         for k in keys:
@@ -309,7 +359,9 @@ class StudioTests(unittest.TestCase):
                            "-f","lavfi","-i","sine=frequency=330","-t",seconds,"-c:v","libx264","-c:a","aac",src])
             return st.persist(src,"mp4")
         order=[char+".profile",char+".sheet"]+[s+"."+k for s in p["shots"] for k in ("environment","plate","first","last","video")]
-        with patch.object(providers,"text",return_value={"name":"小猫","description":"角色或环境描述"}),patch.object(providers,"image",side_effect=make_image),patch.object(providers,"video",side_effect=make_video):
+        def text_result(cfg,instruction,material):
+            return cat_profile() if json.loads(material).get("name")=="小猫" else {"description":"环境描述"}
+        with patch.object(providers,"text",side_effect=text_result),patch.object(providers,"image",side_effect=make_image),patch.object(providers,"video",side_effect=make_video):
             for k in order:
                 wf.execute(p,k,"测试意见",models)
                 wf.review(p,k,True,"同意使用")

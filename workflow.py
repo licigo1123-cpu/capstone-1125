@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import re
+import character_profiles
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -198,17 +199,28 @@ def execute(p, key, note, models, record_task=lambda _: None):
             payload["scenes"] = [visual(p, owner)]
         if key in p["nodes"]:
             payload["previous"] = value(p, key)
+            if profile and character_profiles.species(name):
+                try:
+                    character_profiles.validate_animal(name, payload["previous"])
+                except ValueError:
+                    del payload["previous"]
         prompt = skill("02-character" if profile else "03-environment")
         if profile:
             prompt += "\n结合 storyboard 中目标角色出场分镜的 action 与原文生成外观初稿。按角色归属提取稳定特征。"
+            if character_profiles.species(name):
+                payload["species"] = character_profiles.species(name)
+                prompt += character_profiles.instruction(name)
         for attempt in range(2 if profile else 1):
-            result = api.text(model, prompt, json.dumps(payload, ensure_ascii=False))
-            if not profile or result.get("name") == name:
-                v = result["description"]
+            try:
+                result = api.text(model, prompt, json.dumps(payload, ensure_ascii=False))
+                v = character_profiles.description(name, result) if profile else result["description"]
                 break
-            if attempt:
-                raise ValueError(f"角色设定返回的姓名与当前角色「{name}」不一致，请重新生成")
-            prompt += f'\n本次只生成「{name}」，JSON 中 name 必须逐字为「{name}」。'
+            except (ValueError, KeyError, TypeError) as exc:
+                if not profile:
+                    raise
+                if attempt:
+                    raise ValueError(f"角色设定校验失败：{exc}") from exc
+                prompt += f"\n上次结果未通过校验：{exc}。请只输出当前角色的正确设定。"
     elif kind == "film":
         model = {"model": "FFmpeg"}
         prompt = "按分镜顺序拼接，720×1280，24 fps"
