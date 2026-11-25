@@ -248,6 +248,48 @@ $("#upload").addEventListener("change",async e=>{
   }catch(err){message(err.message,true);}finally{e.target.value="";}
 });
 window.addEventListener("beforeunload",e=>{if(edits.size){e.preventDefault();e.returnValue="";}});
+function initFlowSidebar(){
+  const panel=$("#flow-panel"),handle=$("#flow-handle"),desktop=window.matchMedia("(min-width:901px)");
+  let drag=null,top;
+  function place(y){
+    if(!desktop.matches)return;
+    const height=Math.min(panel.scrollHeight,Math.max(0,window.innerHeight-24));
+    top=Math.max(12,Math.min(y,Math.max(12,window.innerHeight-height-12)));
+    panel.style.setProperty("--flow-top",top+"px");
+  }
+  function endDrag(e){
+    if(!drag||drag.id!==e.pointerId)return;
+    drag=null;
+    panel.classList.remove("dragging");
+    if(handle.hasPointerCapture(e.pointerId))handle.releasePointerCapture(e.pointerId);
+  }
+  handle.addEventListener("pointerdown",e=>{
+    if(e.button!==0||!desktop.matches)return;
+    e.preventDefault();
+    drag={id:e.pointerId,y:e.clientY,top:panel.getBoundingClientRect().top};
+    handle.setPointerCapture(e.pointerId);
+    panel.classList.add("dragging");
+  });
+  handle.addEventListener("pointermove",e=>{
+    if(drag?.id===e.pointerId)place(drag.top+e.clientY-drag.y);
+  });
+  for(const event of ["pointerup","pointercancel","lostpointercapture"])handle.addEventListener(event,endDrag);
+  handle.addEventListener("keydown",e=>{
+    if(!desktop.matches||!["ArrowUp","ArrowDown","Home","End"].includes(e.key))return;
+    e.preventDefault();
+    if(e.key==="Home")place(12);
+    else if(e.key==="End")place(window.innerHeight);
+    else place(panel.getBoundingClientRect().top+(e.key==="ArrowUp"?-20:20));
+  });
+  function layout(){
+    if(!desktop.matches&&drag)endDrag({pointerId:drag.id});
+    place(top??Math.max(12,$("body > header").getBoundingClientRect().bottom+33));
+  }
+  window.addEventListener("resize",layout);
+  desktop.addEventListener("change",layout);
+  layout();
+}
+initFlowSidebar();
 (async()=>{
   try{
     const list=await api("/projects"),saved=localStorage.getItem("paper-studio-project");
