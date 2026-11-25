@@ -192,11 +192,15 @@ def execute(p, key, note, models, record_task=lambda _: None):
             names = cast_names(p)
             name = next(n for n in names if character(n) == owner)
             payload.update(name=name, other_characters=[n for n in names if n != name], story=p["story"])
+            payload["storyboard"] = [dict(shot=s, action=visual(p, s)["plot"])
+                                     for s in p["shots"] if name in value(p, s + ".cast")]
         else:
             payload["scenes"] = [visual(p, owner)]
         if key in p["nodes"]:
             payload["previous"] = value(p, key)
         prompt = skill("02-character" if profile else "03-environment")
+        if profile:
+            prompt += "\n结合 storyboard 中目标角色出场分镜的 action 与原文生成外观初稿。按角色归属提取稳定特征。"
         for attempt in range(2 if profile else 1):
             result = api.text(model, prompt, json.dumps(payload, ensure_ascii=False))
             if not profile or result.get("name") == name:

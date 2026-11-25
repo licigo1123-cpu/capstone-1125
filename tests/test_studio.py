@@ -206,7 +206,8 @@ class StudioTests(unittest.TestCase):
             wf.execute(p,target,"",models)
             instruction=text.call_args.args[1]
             initial=json.loads(text.call_args.args[2])
-            self.assertEqual(initial,{"name":"小猫","other_characters":[],"story":p["story"],"note":""})
+            self.assertEqual(initial,{"name":"小猫","other_characters":[],"story":p["story"],"note":"",
+                                      "storyboard":[dict(shot=s,action=wf.visual(p,s)["plot"]) for s in p["shots"]]})
             self.assertIn("只为 name 指定的单个角色",instruction)
             self.assertIn("角色外观范围",instruction)
             self.assertIn("场景地点、时间、光线、背景、剧情",instruction)
@@ -247,6 +248,23 @@ class StudioTests(unittest.TestCase):
             self.assertRaisesRegex(ValueError,"姓名与当前角色",wf.execute,p,targets["小禾"],"",{"text":{"model":"test"}})
             self.assertEqual(text.call_count,2)
         self.assertEqual(len(p["nodes"][targets["小禾"]]["versions"]),1)
+
+    def test_profile_draft_uses_only_target_appearance_shots(self):
+        p=wf.new()
+        p["story"]="小禾走进花店，爷爷留在家里。"
+        rows=plan()
+        for i,row in enumerate(rows["shots"]):
+            row["cast"]=["小禾"] if i<2 else ["爷爷"]
+        wf.install_plan(p,rows)
+        for s in p["shots"]:
+            for field in ("scene","cast"):
+                wf.review(p,s+"."+field,True,"")
+        with patch.object(providers,"text",return_value={"name":"小禾","description":"黑色短发女孩，穿黄色外套。"}) as text:
+            wf.execute(p,wf.character("小禾")+".profile","",{"text":{"model":"test"}})
+        payload=json.loads(text.call_args.args[2])
+        self.assertEqual([row["shot"] for row in payload["storyboard"]],["S01","S02"])
+        self.assertTrue(all(set(row)=={"shot","action"} for row in payload["storyboard"]))
+        self.assertIn("storyboard",text.call_args.args[1])
 
     def test_minimax_and_local_video_bind_both_anchors(self):
         keys=["a"*64+".png","b"*64+".png"]
