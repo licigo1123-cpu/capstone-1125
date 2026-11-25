@@ -55,13 +55,14 @@ function panel(key) {
   const feedback=`<label class="feedback">修改建议<input class="notes" data-note="${key}" value="${esc(notes.get(key)||"")}" placeholder="写下要调整的细节"></label>`;
   const actions=[];
   if(textual) actions.push(button("保存编辑","edit",key));
-  if(kind==="profile") {
+  if(kind==="profile"||kind==="environment") {
     if(v) actions.push(button("按建议修改","generate",key));
   }else if(!["scene","cast","dialogue"].includes(kind)) actions.push(button(v?"按当前输入重做":"生成"+labels[kind],"generate",key,!v));
   else actions.push(button("按建议修改","generate",key));
   if(v) actions.push(button("审核通过","approve",key),button("退回修改","reject",key),button("历史 · "+node.versions.length,"versions",key));
   return `<section class="card ${kind}"><div class="caption"><h3>${labels[kind]}</h3><span class="badge">${esc(node?.status||"待制作")}</span></div>
   ${kind==="profile"?`<div class="actions">${button(v?"重新自动生成":"自动生成初版","generate",key,true)}</div><p class="hint">根据该角色出场的已确认分镜生成描述，可继续手动编辑。</p>`:""}
+  ${kind==="environment"?`<div class="actions">${button(v?"重新自动生成初稿":"自动生成初稿","generate",key,true)}</div><p class="hint">根据本镜已确认的场景生成地点、时段、布局和光线描述，可编辑并审核后生成环境参考图。</p>`:""}
   ${content}${feedback}<div class="actions">${actions.join("")}</div></section>`;
 }
 function render(){
@@ -196,7 +197,8 @@ async function handle(el){
     const link=document.createElement("a");link.href="/package?id="+p.id;link.download="comic-project.zip";link.click();
     message("项目已保存，正在下载包含历史素材的项目包。");
   }else if(a==="generate"){
-    message(k==="plan"?"正在提交拆镜任务，等待文本模型返回……":kindOf(k)==="profile"?"正在根据分镜生成该角色的描述初稿……":"正在提交制作任务……");
+    const progress={profile:"正在根据分镜生成该角色的描述初稿……",environment:"正在根据当前分镜生成场景环境初稿……"};
+    message(k==="plan"?"正在提交拆镜任务，等待文本模型返回……":progress[kindOf(k)]||"正在提交制作任务……");
     await send("generate",{target:k,note});
     if(!activeJob() && jobs[0]?.status==="失败")message(jobs[0].message,true);
   }

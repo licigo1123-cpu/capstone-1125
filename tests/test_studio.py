@@ -274,6 +274,24 @@ class StudioTests(unittest.TestCase):
         self.assertTrue(all(set(row)=={"shot","action"} for row in payload["storyboard"]))
         self.assertIn("storyboard",text.call_args.args[1])
 
+    def test_environment_draft_uses_current_shot_and_keeps_history(self):
+        p=wf.new()
+        wf.install_plan(p,plan())
+        wf.review(p,"S02.scene",True,"")
+        description="黄昏的花店，木质花架沿墙排列，暖色灯光照亮入口的瓷砖地面。"
+        with patch.object(providers,"text",return_value={"description":description}) as text:
+            wf.execute(p,"S02.environment","",{"text":{"model":"test"}})
+            payload=json.loads(text.call_args.args[2])
+            self.assertEqual(payload,{"scenes":[wf.visual(p,"S02")],"note":""})
+            self.assertIn("纯环境空镜",text.call_args.args[1])
+            self.assertEqual(wf.status(p,"S02.environment"),"待审核")
+            self.assertNotIn("S01.environment",p["nodes"])
+            wf.execute(p,"S02.environment","改成冷色灯光",{"text":{"model":"test"}})
+            revised=json.loads(text.call_args.args[2])
+            self.assertEqual(revised["previous"],description)
+            self.assertEqual(revised["note"],"改成冷色灯光")
+        self.assertEqual(len(p["nodes"]["S02.environment"]["versions"]),2)
+
     def test_calico_rejects_human_features_and_incorrect_coat(self):
         valid=cat_profile("三花猫")
         self.assertIn("黑、白、橘",character_profiles.description("三花猫",valid))
