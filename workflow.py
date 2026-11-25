@@ -99,6 +99,29 @@ def environment_key(p, key):
     return key
 
 
+def label(p, key):
+    if key == "plan":
+        return "剧本分镜"
+    if key == "final.film":
+        return "最终成片"
+    owner, _, kind = key.partition(".")
+    fields = dict(scene="场景与剧情", cast="角色信息", dialogue="对白", profile="设定卡",
+                  sheet="三视图", environment="环境设定", plate="环境参考图", first="首帧", last="尾帧", video="视频")
+    if owner in p["shots"]:
+        if kind in ("environment", "plate"):
+            owners = list(dict.fromkeys(scene_owner(p, s) for s in p["shots"]))
+            prefix = "场景" + str(owners.index(scene_owner(p, owner)) + 1)
+        else:
+            prefix = "分镜" + str(p["shots"].index(owner) + 1)
+    else:
+        prefix = "历史角色"
+        for index, name in enumerate(cast_names(p), 1):
+            if character(name) == owner:
+                prefix = f"角色{index}「{name}」"
+                break
+    return prefix + ("的" + fields[kind] if kind in fields else "")
+
+
 def share_scene(p, shot, source):
     if shot not in p["shots"] or source not in p["shots"]:
         raise ValueError("请选择有效的分镜环境来源")
@@ -185,7 +208,7 @@ def ready(p, k):
     allowed(p, k)
     for d in dependencies(p, k):
         if status(p, d) != "已确认":
-            raise ValueError("请先审核上游素材或分镜字段：" + d)
+            raise ValueError("请先审核上游" + label(p, d))
 
 
 def version(p, k, v, note="", source="手动", prompt=None):

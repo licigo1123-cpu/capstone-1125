@@ -7,7 +7,7 @@ const labels = {scene:"场景与剧情",cast:"出镜角色",dialogue:"独立对�
 const textKinds = ["scene","cast","dialogue","profile","environment"];
 const edits = new Map();
 const notes = new Map();
-let p, jobs = [], step = 0, timer, pending = false, config;
+let p, jobs = [], step = 0, timer, pending = false, config, lastNotice="";
 const kindOf = key => key.split(".")[1];
 const current = key => p.nodes[key]?.versions.at(-1);
 const activeJob = () => jobs.find(j => ["排队中","制作中"].includes(j.status));
@@ -16,9 +16,39 @@ const button = (label,action,key="",primary=false) =>
 const input = (key,field,label,v,rows=0) => `<label>${label}${rows ?
   `<textarea data-key="${esc(key)}" data-field="${field}" rows="${rows}">${esc(v)}</textarea>` :
   `<input data-key="${esc(key)}" data-field="${field}" value="${esc(v)}">`}</label>`;
-function message(s,error=false) {
-  $("#message").textContent=s;
-  $("#message").classList.toggle("error",error);
+function sceneLabel(shot){
+  const owner=p?.scene_owners?.[shot]||shot;
+  const owners=Object.keys(p?.scene_groups||{});
+  return "场景"+(owners.includes(owner)?owners.indexOf(owner)+1:(p?.shots.indexOf(shot)??-1)+1);
+}
+function targetLabel(key){
+  if(key==="plan")return "剧本分镜";
+  if(key==="final.film")return "最终成片";
+  const [owner,kind]=key.split(".");
+  const fields={scene:"场景与剧情",cast:"角色信息",dialogue:"对白",profile:"设定卡",sheet:"三视图",environment:"环境设定",plate:"环境参考图",first:"首帧",last:"尾帧",video:"视频"};
+  let prefix;
+  if(p?.shots.includes(owner))prefix=["environment","plate"].includes(kind)?sceneLabel(owner):"分镜"+(p.shots.indexOf(owner)+1);
+  else{
+    const roles=Object.entries(p?.characters||{}),index=roles.findIndex(([,id])=>id===owner);
+    prefix=index>=0?"角色"+(index+1)+"「"+roles[index][0]+"」":"历史角色";
+  }
+  return prefix+(fields[kind]?"的"+fields[kind]:"");
+}
+function humanMessage(text){
+  return String(text||"").replace("请先审核上游素材或分镜字段：","请先审核上游")
+    .replace(/(?:S\d+\.(?:scene|cast|dialogue|environment|plate|first|last|video)|[a-f0-9]{24}\.(?:profile|sheet)|final\.film)/g,key=>targetLabel(key));
+}
+function message(s,error=false,repeat=true) {
+  const notice=$("#notice"),text=humanMessage(s);
+  if(!text){lastNotice="";if(notice.open)notice.close();return;}
+  if(!repeat&&lastNotice===text)return;
+  if(!error&&notice.open&&notice.dataset.error==="true")return;
+  lastNotice=text;
+  $("#notice-text").textContent=text;
+  $("#notice-title").textContent=error?"操作未完成":"提示";
+  notice.classList.toggle("error",error);
+  notice.dataset.error=String(error);
+  if(!notice.open)notice.showModal();
 }
 async function api(url, options) {
   const r=await fetch(url,options), result=await r.json();
@@ -80,7 +110,7 @@ function render(){
   $("#steps").innerHTML=steps.map((s,i)=>`<button data-a="step" data-i="${i}" class="${step===i?"active":""}" aria-current="${step===i?"step":"false"}"><span class="num">0${i+1}</span>${s}</button>`).join("");
   const sec=p.shots.reduce((sum,s)=>sum+current(s+".scene").value.seconds,0);
   $("#count").textContent=`${p.shots.length} 镜 · ${sec} 秒 · 9:16`;
-  const head=s=>`<h2>分镜 ${s.slice(1)} · ${esc(current(s+".scene").value.place)}</h2>`;
+  const head=s=>`<h2>分镜${p.shots.indexOf(s)+1} · ${esc(current(s+".scene").value.place)}</h2>`;
   let content="";
   if(step===0){
     content=`<section class="card"><h2>风格设定</h2><textarea id="style" aria-label="风格设定" rows="3" placeholder="例如：水彩绘本风格，柔和低饱和配色，手绘纸张质感……">${esc(edits.get("style")??p.style??"漫画插画")}</textarea>
@@ -92,14 +122,14 @@ function render(){
   }else if(!p.shots.length){
     content='<div class="empty">先在「剧本分镜」输入故事并拆镜。</div>';
   }else if(step===1){
-    content=Object.entries(p.characters).map(([name,id])=>`<article><h2>${esc(name)}</h2><div class="group">${panel(id+".profile")}${panel(id+".sheet")}</div></article>`).join("") || '<div class="empty">当前分镜均为空镜。</div>';
+    content=Object.entries(p.characters).map(([name,id],i)=>`<article><h2>角色${i+1} · ${esc(name)}</h2><div class="group">${panel(id+".profile")}${panel(id+".sheet")}</div></article>`).join("") || '<div class="empty">当前分镜均为空镜。</div>';
   }else if(step===2){
     content=(p.scene_sharing_available?`<section class="card"><h2>场景复用</h2><p class="hint">同地点、同时间段可共用一份环境设定和参考图。需要不同布置的分镜可选择「本镜环境」。</p>
       ${button("按地点和时间合并场景","group-scenes","",true)}
-      ${p.shots.map(s=>`<label>分镜 ${s.slice(1)} 的环境来源<select data-scene-source="${s}">${p.scene_candidates[s].map(t=>`<option value="${t}" ${p.scene_owners[s]===t?"selected":""}>${t===s?"本镜环境":"共用分镜 "+t.slice(1)+" 的环境"} · ${esc(current(t+".scene").value.place)} · ${esc(current(t+".scene").value.time)}</option>`).join("")}</select></label>`).join("")}</section>`:
+      ${p.shots.map(s=>`<label>分镜${p.shots.indexOf(s)+1}的环境来源<select data-scene-source="${s}">${p.scene_candidates[s].map(t=>`<option value="${t}" ${p.scene_owners[s]===t?"selected":""}>${t===s?"本镜环境":"共用"+sceneLabel(t)} · ${esc(current(t+".scene").value.place)} · ${esc(current(t+".scene").value.time)}</option>`).join("")}</select></label>`).join("")}</section>`:
       '<section class="card"><p>当前服务使用逐镜环境。重启工作台服务后可启用场景复用。</p></section>')+
-      Object.entries(p.scene_groups).map(([owner,members])=>`<article><h2>${esc(current(owner+".scene").value.place)} · ${esc(current(owner+".scene").value.time)}</h2>
-        <p class="hint">使用分镜 ${members.map(s=>s.slice(1)).join("、")} · 环境来源 ${owner}</p>
+      Object.entries(p.scene_groups).map(([owner,members])=>`<article><h2>${sceneLabel(owner)} · ${esc(current(owner+".scene").value.place)} · ${esc(current(owner+".scene").value.time)}</h2>
+        <p class="hint">使用分镜 ${members.map(s=>p.shots.indexOf(s)+1).join("、")}</p>
         <div class="frame-pair">${panel(owner+".environment")}${panel(owner+".plate")}</div></article>`).join("");
   }else if(step===5){
     const count=p.shots.filter(s=>p.nodes[s+".video"]?.status==="已确认").length;
@@ -111,14 +141,14 @@ function render(){
   }else{
     const kinds=step===3?["first","last"]:["video"];
     content=p.shots.map(s=>`<article><header class="card"><div>${head(s)}<p>${esc(current(s+".scene").value.plot)}</p></div></header>
-      ${step===3?`<p class="hint">环境来源 · ${esc(p.scene_owners[s])}</p>`:""}
+      ${step===3?`<p class="hint">环境来源 · ${sceneLabel(s)}</p>`:""}
       <div class="${kinds.length===2?"frame-pair":""}">${kinds.map(k=>panel(s+"."+k)).join("")}</div></article>`).join("");
   }
   $("#work").innerHTML=`<h1>${steps[step]}</h1>${content}`;
-  if(jobs.length) $("#work").insertAdjacentHTML("beforeend",`<details><summary>制作任务记录</summary>${jobs.map(j=>`<p>${esc(j.target)} · ${esc(j.status)} ${esc(j.message)} ${j.remote_id?" · 远端 "+esc(j.remote_id):""}</p>`).join("")}</details>`);
+  if(jobs.length) $("#work").insertAdjacentHTML("beforeend",`<details><summary>制作任务记录</summary>${jobs.map(j=>`<p>${esc(targetLabel(j.target))} · ${esc(j.status)} ${esc(humanMessage(j.message))} ${j.remote_id?" · 远端 "+esc(j.remote_id):""}</p>`).join("")}</details>`);
   const job=activeJob();
   if(job){
-    message(`${job.target} · ${job.status}，可切换步骤查看。`);
+    message(`${targetLabel(job.target)} · ${job.status}，关闭提示后可切换步骤查看。`,false,false);
     $("#work").querySelectorAll("input,textarea,button").forEach(el=>el.disabled=true);
     $("#title").disabled=true;
     timer=setTimeout(poll,1500);
@@ -132,10 +162,10 @@ async function poll(){
     setState(data);
     if(!activeJob()){
       const j=jobs[0];
-      message(j.status==="完成"?"制作完成，可以审核当前版本。":j.message,j.status!=="完成");
+      message(j.status==="完成"?targetLabel(j.target)+"制作完成，可以审核当前版本。":j.message,j.status!=="完成",false);
     }
     render();
-  }catch(e){message(e.message,true);timer=setTimeout(poll,3000);}
+  }catch(e){message(e.message,true,false);timer=setTimeout(poll,3000);}
 }
 function fieldValue(key,v){
   if(kindOf(key)==="cast" && typeof v==="string")return v.split(/[\n、，,]/).map(n=>n.trim()).filter(Boolean);
@@ -165,7 +195,7 @@ function versions(key){
   modal(`<h2>${labels[kindOf(key)]} · 历史版本</h2><p class="hint">回退后会新增一条待审核记录。历史素材保留生成时的上游引用及风格，可据此核对需要还原的设定。</p>`+vs.map((v,i)=>`<div class="history"><b>版本 ${i+1} · ${esc(v.review)}</b>
     <p><time>${esc(v.at)}</time> · ${esc(v.source)}</p>${textKinds.includes(kindOf(key))?`<pre>${esc(typeof v.value==="string"?v.value:JSON.stringify(v.value,null,2))}</pre>`:media(v.value)}
     ${v.restored_from?`<p>从版本 ${esc(v.restored_from)} 回退</p>`:""}${v.style?`<p>风格 · ${esc(v.style)}</p>`:""}
-    ${Object.keys(v.inputs).length?`<details><summary>使用的上游版本</summary>${Object.entries(v.inputs).map(([dep,number])=>`<p>${esc(dep)} · ${esc(labels[kindOf(dep)])} · 版本 ${number}</p>`).join("")}</details>`:""}
+    ${Object.keys(v.inputs).length?`<details><summary>使用的上游版本</summary>${Object.entries(v.inputs).map(([dep,number])=>`<p>${esc(targetLabel(dep))} · 版本 ${number}</p>`).join("")}</details>`:""}
     <p>${esc(v.note)}</p>${v.reviews.map(r=>`<p>${esc(r.state)} · ${esc(r.note)} <time>${esc(r.at)}</time></p>`).join("")}
     ${i<vs.length-1?`<button class="primary" data-a="restore" data-k="${key}" data-i="${i}">回退到版本 ${i+1}</button>`:'<span class="badge">当前版本</span>'}</div>`).reverse().join(""));
 }
@@ -249,7 +279,7 @@ document.addEventListener("click",async e=>{
   const el=e.target.closest("[data-a]");
   if(!el||pending)return;
   pending=true;
-  try{await handle(el);}catch(err){message(err.message,true);if($("#dialog").open)alert(err.message);}
+  try{await handle(el);}catch(err){message(err.message,true);}
   finally{pending=false;}
 });
 $("#upload").addEventListener("change",async e=>{

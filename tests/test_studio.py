@@ -124,6 +124,26 @@ class StudioTests(unittest.TestCase):
         self.assertRaises(ValueError,wf.review,p,"S01.first",True,"")
         self.assertEqual(len(p["nodes"][char+".profile"]["versions"]),2)
 
+    def test_upstream_errors_identify_numbered_shots_characters_and_scenes(self):
+        p=wf.new()
+        wf.install_plan(p,plan())
+        char=wf.character("小猫")
+        self.assertRaisesRegex(ValueError,"请先审核上游角色1「小猫」的设定卡",wf.ready,p,char+".sheet")
+        self.assertRaisesRegex(ValueError,"请先审核上游分镜1的场景与剧情",wf.ready,p,"S01.first")
+        wf.review(p,"S01.scene",True,"")
+        wf.review(p,"S01.cast",True,"")
+        self.assertRaisesRegex(ValueError,"请先审核上游场景1的环境参考图",wf.ready,p,"S01.first")
+        wf.group_scenes(p)
+        self.assertEqual(wf.label(p,"S03.plate"),"场景1的环境参考图")
+        with st.db() as c:
+            st.save(c,p,fresh=True)
+        code,body=self.http("POST","/action",dict(op="generate",id=p["id"],revision=p["revision"],target=char+".sheet"))
+        self.assertEqual(code,400)
+        text=json.loads(body)["error"]
+        self.assertIn("角色1「小猫」",text)
+        self.assertNotIn(char,text)
+        self.assertNotIn(".profile",text)
+
     def shot_table(self, count=4):
         return "| 镜号 | 地点 | 时段 | 出镜角色 | 动作与运镜 | 开始画面 | 结束画面 | 对白 |\n" + \
             "| --- | --- | --- | --- | --- | --- | --- | --- |\n" + "\n".join(
