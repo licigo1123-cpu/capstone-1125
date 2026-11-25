@@ -59,7 +59,7 @@ function panel(key) {
     if(v) actions.push(button("按建议修改","generate",key));
   }else if(!["scene","cast","dialogue"].includes(kind)) actions.push(button(v?"按当前输入重做":"生成"+labels[kind],"generate",key,!v));
   else actions.push(button("按建议修改","generate",key));
-  if(v) actions.push(button("审核通过","approve",key),button("退回修改","reject",key),button("历史 · "+node.versions.length,"versions",key));
+  if(v) actions.push(button("审核通过","approve",key),button("退回修改","reject",key),button("历史版本 · "+node.versions.length,"versions",key));
   return `<section class="card ${kind}"><div class="caption"><h3>${labels[kind]}</h3><span class="badge">${esc(node?.status||"待制作")}</span></div>
   ${kind==="profile"?`<div class="actions">${button(v?"重新自动生成":"自动生成初版","generate",key,true)}</div><p class="hint">根据该角色出场的已确认分镜生成描述，可继续手动编辑。</p>`:""}
   ${kind==="environment"?`<div class="actions">${button(v?"重新自动生成初稿":"自动生成初稿","generate",key,true)}</div><p class="hint">根据本镜已确认的场景生成地点、时段、布局和光线描述，可编辑并审核后生成环境参考图。</p>`:""}
@@ -144,10 +144,12 @@ function modal(html){
 }
 function versions(key){
   const vs=p.nodes[key].versions;
-  modal(`<h2>${labels[kindOf(key)]} · 版本记录</h2>`+vs.map((v,i)=>`<div class="history"><b>版本 ${i+1} · ${esc(v.review)}</b>
+  modal(`<h2>${labels[kindOf(key)]} · 历史版本</h2><p class="hint">回退后会新增一条待审核记录。历史素材保留生成时的上游引用及风格，可据此核对需要还原的设定。</p>`+vs.map((v,i)=>`<div class="history"><b>版本 ${i+1} · ${esc(v.review)}</b>
     <p><time>${esc(v.at)}</time> · ${esc(v.source)}</p>${textKinds.includes(kindOf(key))?`<pre>${esc(typeof v.value==="string"?v.value:JSON.stringify(v.value,null,2))}</pre>`:media(v.value)}
+    ${v.restored_from?`<p>从版本 ${esc(v.restored_from)} 回退</p>`:""}${v.style?`<p>风格 · ${esc(v.style)}</p>`:""}
+    ${Object.keys(v.inputs).length?`<details><summary>使用的上游版本</summary>${Object.entries(v.inputs).map(([dep,number])=>`<p>${esc(dep)} · ${esc(labels[kindOf(dep)])} · 版本 ${number}</p>`).join("")}</details>`:""}
     <p>${esc(v.note)}</p>${v.reviews.map(r=>`<p>${esc(r.state)} · ${esc(r.note)} <time>${esc(r.at)}</time></p>`).join("")}
-    ${i<vs.length-1?`<button data-a="restore" data-k="${key}" data-i="${i}">恢复为新版本</button>`:""}</div>`).reverse().join(""));
+    ${i<vs.length-1?`<button class="primary" data-a="restore" data-k="${key}" data-i="${i}">回退到版本 ${i+1}</button>`:'<span class="badge">当前版本</span>'}</div>`).reverse().join(""));
 }
 const serviceNames={text:"文本模型",image:"图片模型",video:"视频模型"};
 const localNames={text:"本地 Qwen · Ollama",image:"本地 MiniMax H3 Image",video:"本地 MiniMax H3"};
@@ -207,7 +209,10 @@ async function handle(el){
     if(!activeJob() && jobs[0]?.status==="失败")message(jobs[0].message,true);
   }
   else if(a==="approve"||a==="reject"){await send("review",{target:k,note,approve:a==="approve"});message("审核意见已保存");}
-  else if(a==="restore"){await send("restore",{target:k,index:Number(el.dataset.i),note});$("#dialog").close();message("已恢复为待审核的新版本");}
+  else if(a==="restore"){
+    await send("restore",{target:k,index:Number(el.dataset.i),note});$("#dialog").close();
+    message(p.nodes[k].status==="上游已变更"?"已回退历史版本；其上游或风格与当前设定有差异，请核对历史记录中的上游版本。":"已回退到所选内容，请审核确认。之后可继续使用与该版本内容匹配的下游素材。");
+  }
   else if(a==="edit"){message("编辑已保存为新版本");}
   if(k)notes.delete(k);
   render();

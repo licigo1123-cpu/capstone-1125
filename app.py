@@ -85,13 +85,7 @@ def action(body):
         elif op == "review":
             wf.review(p, k, body["approve"] is True, note)
         elif op == "restore":
-            wf.ready(p, k)
-            old = p["nodes"][k]["versions"][int(body["index"])]
-            if k.split(".")[1] in wf.STYLED_MEDIA and old.get("style", wf.DEFAULT_STYLE) != p.get("style", wf.DEFAULT_STYLE):
-                raise ValueError("历史素材的风格与当前设定不同，请按当前风格重新制作")
-            if old["inputs"] != wf.stamps(p, k):
-                raise ValueError("历史版本的上游输入已经变化，请按当前参考重新制作")
-            wf.version(p, k, old["value"], note, "恢复历史版本", old["prompt"])
+            wf.restore(p, k, body["index"], note)
         else:
             raise ValueError("未知操作")
         st.save(c, p)

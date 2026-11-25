@@ -107,6 +107,17 @@ def stamps(p, key):
     return {d: len(p["nodes"].get(d, {}).get("versions", [])) for d in dependencies(p, key)}
 
 
+def inputs_match(p, key, snapshot):
+    saved = snapshot["inputs"]
+    if set(saved) != set(dependencies(p, key)):
+        return False
+    for dep, revision in saved.items():
+        versions = p["nodes"].get(dep, {}).get("versions", [])
+        if not 1 <= revision <= len(versions) or versions[revision - 1]["value"] != versions[-1]["value"]:
+            return False
+    return True
+
+
 def status(p, k):
     node = p["nodes"].get(k)
     if not node:
@@ -114,7 +125,7 @@ def status(p, k):
     current = node["versions"][-1]
     if k.split(".")[1] in STYLED_MEDIA and current.get("style", DEFAULT_STYLE) != p.get("style", DEFAULT_STYLE):
         return "上游已变更"
-    if current["inputs"] != stamps(p, k) or any(status(p, d) != "已确认" for d in current["inputs"]):
+    if not inputs_match(p, k, current) or any(status(p, d) != "已确认" for d in current["inputs"]):
         return "上游已变更"
     return current["review"]
 
@@ -143,6 +154,18 @@ def review(p, k, approve, note):
     v = p["nodes"][k]["versions"][-1]
     v["review"] = "已确认" if approve else "需修改"
     v["reviews"].append(dict(at=now(), state=v["review"], note=note))
+
+
+def restore(p, key, index, note=""):
+    allowed(p, key)
+    versions = p["nodes"].get(key, {}).get("versions", [])
+    if type(index) is not int or not 0 <= index < len(versions):
+        raise ValueError("请选择有效的历史版本")
+    previous = copy.deepcopy(versions[index])
+    # Preserve the historical content, actual upstream references, and generation style.
+    previous["value"] = clean(key.split(".")[1], previous["value"])
+    previous.update(at=now(), source="历史回退", note=note, review="待审核", reviews=[], restored_from=index + 1)
+    versions.append(previous)
 
 
 def install_plan(p, obj):

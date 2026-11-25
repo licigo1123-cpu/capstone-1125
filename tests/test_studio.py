@@ -321,8 +321,10 @@ class StudioTests(unittest.TestCase):
         self.assertRaises(ValueError,wf.review,p,char+".sheet",True,"")
         with st.db() as c:
             st.save(c,p,fresh=True)
-        self.assertRaisesRegex(ValueError,"历史素材的风格",app.action,
-                               dict(op="restore",id=p["id"],revision=p["revision"],target=char+".sheet",index=0))
+        restored=app.action(dict(op="restore",id=p["id"],revision=p["revision"],target=char+".sheet",index=0))["project"]
+        self.assertEqual(wf.status(restored,char+".sheet"),"上游已变更")
+        self.assertEqual(restored["nodes"][char+".sheet"]["versions"][-1]["restored_from"],1)
+        self.assertRaises(ValueError,wf.review,restored,char+".sheet",True,"")
         wf.version(p,char+".sheet","b"*64+".png")
         self.assertEqual(p["nodes"][char+".sheet"]["versions"][-1]["style"],p["style"])
 
@@ -338,6 +340,76 @@ class StudioTests(unittest.TestCase):
         del imported["style"]
         st.validate(imported)
         self.assertEqual(wf.view(imported)["style"],wf.DEFAULT_STYLE)
+
+    def test_scene_rollback_reuses_matching_approved_environment(self):
+        p=wf.new()
+        wf.install_plan(p,plan())
+        wf.review(p,"S01.scene",True,"")
+        wf.version(p,"S01.environment","黄昏的无人花店")
+        wf.review(p,"S01.environment",True,"")
+        wf.version(p,"S01.plate","a"*64+".png")
+        wf.review(p,"S01.plate",True,"")
+        original=copy.deepcopy(p["nodes"]["S01.scene"]["versions"][0])
+        changed=dict(original["value"],plot="少女手持画夹向前走")
+        wf.version(p,"S01.scene",changed)
+        wf.review(p,"S01.scene",True,"")
+        self.assertEqual(wf.status(p,"S01.plate"),"上游已变更")
+        wf.restore(p,"S01.scene",0,"还原剧情")
+        self.assertEqual(wf.value(p,"S01.scene"),original["value"])
+        self.assertEqual(wf.status(p,"S01.scene"),"待审核")
+        self.assertEqual(wf.status(p,"S01.plate"),"上游已变更")
+        wf.review(p,"S01.scene",True,"")
+        self.assertEqual(wf.status(p,"S01.environment"),"已确认")
+        self.assertEqual(wf.status(p,"S01.plate"),"已确认")
+        self.assertEqual(p["nodes"]["S01.scene"]["versions"][0],original)
+        self.assertEqual(p["nodes"]["S01.plate"]["versions"][0]["inputs"],{"S01.environment":1})
+        st.validate(p)
+
+    def test_http_rollback_keeps_media_history_without_model_calls(self):
+        p=wf.new()
+        wf.install_plan(p,plan())
+        wf.review(p,"S01.scene",True,"")
+        wf.version(p,"S01.environment","无人花店")
+        wf.review(p,"S01.environment",True,"")
+        for prefix in ("a","b"):
+            wf.version(p,"S01.plate",prefix*64+".png")
+            wf.review(p,"S01.plate",True,"")
+        old=copy.deepcopy(p["nodes"]["S01.plate"]["versions"])
+        with st.db() as c:
+            st.save(c,p,fresh=True)
+        with patch.object(providers,"request") as model:
+            code,data=self.http("POST","/action",dict(op="restore",id=p["id"],revision=p["revision"],target="S01.plate",index=0))
+        model.assert_not_called()
+        self.assertEqual(code,200)
+        restored=json.loads(data)["project"]
+        versions=restored["nodes"]["S01.plate"]["versions"]
+        self.assertEqual(versions[:2],old)
+        self.assertEqual(versions[-1]["value"],"a"*64+".png")
+        self.assertEqual(versions[-1]["restored_from"],1)
+        self.assertEqual(wf.status(restored,"S01.plate"),"待审核")
+        self.assertEqual(versions[-1]["reviews"],[])
+        wf.review(restored,"S01.plate",True,"")
+        self.assertEqual(wf.status(restored,"S01.plate"),"已确认")
+        st.validate(restored)
+
+    def test_restored_media_retains_its_actual_upstream_dependencies(self):
+        p=wf.new()
+        wf.install_plan(p,plan())
+        wf.review(p,"S01.scene",True,"")
+        wf.version(p,"S01.environment","原来的花店")
+        wf.review(p,"S01.environment",True,"")
+        wf.version(p,"S01.plate","a"*64+".png")
+        wf.version(p,"S01.environment","全新的教室")
+        wf.review(p,"S01.environment",True,"")
+        wf.restore(p,"S01.plate",0)
+        self.assertEqual(p["nodes"]["S01.plate"]["versions"][-1]["inputs"],{"S01.environment":1})
+        self.assertEqual(wf.status(p,"S01.plate"),"上游已变更")
+        self.assertRaises(ValueError,wf.review,p,"S01.plate",True,"")
+        for index in (-1,5,True,"0"):
+            self.assertRaises(ValueError,wf.restore,p,"S01.plate",index)
+        wf.restore(p,"S01.environment",0)
+        wf.review(p,"S01.environment",True,"")
+        self.assertEqual(wf.status(p,"S01.plate"),"待审核")
 
     def test_muse_image_ratios_references_and_async_download(self):
         source=st.DATA/"source.webp"
