@@ -58,7 +58,7 @@ def action(body):
             raise ValueError("此项目有更新，请刷新后重试")
         if c.execute("SELECT 1 FROM jobs WHERE project=? AND status IN ('制作中','排队中')", (p["id"],)).fetchone():
             raise ValueError("本项目正在制作，请等待任务完成")
-        k, note = body.get("target", ""), str(body.get("note", ""))
+        k, note = wf.environment_key(p, body.get("target", "")), str(body.get("note", ""))
         if op == "save":
             p["title"] = wf.words(body["title"])
             if p["shots"] and p["story"] != body["story"]:
@@ -66,6 +66,10 @@ def action(body):
             p["story"] = str(body["story"])
             if "style" in body:
                 p["style"] = wf.words(body["style"])
+        elif op == "scene-source":
+            wf.share_scene(p, k, body["source"])
+        elif op == "group-scenes":
+            wf.group_scenes(p)
         elif op == "generate":
             if k == "plan":
                 if p["shots"] or not p["story"].strip():
@@ -165,7 +169,7 @@ class Handler(BaseHTTPRequestHandler):
                     st.pack(p, f)
                     return self.stream(f, f.tell(), "application/zip","comic-project.zip")
             if path == "/storyboard":
-                return self.reply(dict(ratio=p["ratio"], style=p.get("style", wf.DEFAULT_STYLE), shots=[dict(id=s, **{f:wf.value(p,s+"."+f)
+                return self.reply(dict(ratio=p["ratio"], style=p.get("style", wf.DEFAULT_STYLE), scene_sources={s:wf.scene_owner(p,s) for s in p["shots"]}, shots=[dict(id=s, **{f:wf.value(p,s+"."+f)
                                   for f in wf.FIELDS[:2]}) for s in p["shots"]],
                                   dialogue={s:wf.value(p,s+".dialogue") for s in p["shots"]}))
             self.send_error(404)

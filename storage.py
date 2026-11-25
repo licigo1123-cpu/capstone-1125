@@ -110,6 +110,9 @@ def validate(p):
         raise ValueError("项目结构不完整")
     if len(p["shots"]) not in (0, 4, 5, 6) or p["shots"] != [f"S{i+1:02}" for i in range(len(p["shots"]))]:
         raise ValueError("无效分镜顺序")
+    links = p.get("scene_sources", {})
+    if not isinstance(links, dict) or any(s not in p["shots"] or source not in p["shots"] for s, source in links.items()):
+        raise ValueError("共享场景来源无效")
     for s in p["shots"]:
         for field in wf.FIELDS:
             if s + "." + field not in p["nodes"]:

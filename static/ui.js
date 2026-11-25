@@ -84,6 +84,13 @@ function render(){
     content='<div class="empty">先在「剧本分镜」输入故事并拆镜。</div>';
   }else if(step===1){
     content=Object.entries(p.characters).map(([name,id])=>`<article><h2>${esc(name)}</h2><div class="group">${panel(id+".profile")}${panel(id+".sheet")}</div></article>`).join("") || '<div class="empty">当前分镜均为空镜。</div>';
+  }else if(step===2){
+    content=`<section class="card"><h2>场景复用</h2><p class="hint">同地点、同时间段可共用一份环境设定和参考图。需要不同布置的分镜可选择「本镜环境」。</p>
+      ${button("按地点和时间合并场景","group-scenes","",true)}
+      ${p.shots.map(s=>`<label>分镜 ${s.slice(1)} 的环境来源<select data-scene-source="${s}">${p.scene_candidates[s].map(t=>`<option value="${t}" ${p.scene_owners[s]===t?"selected":""}>${t===s?"本镜环境":"共用分镜 "+t.slice(1)+" 的环境"} · ${esc(current(t+".scene").value.place)} · ${esc(current(t+".scene").value.time)}</option>`).join("")}</select></label>`).join("")}</section>`+
+      Object.entries(p.scene_groups).map(([owner,members])=>`<article><h2>${esc(current(owner+".scene").value.place)} · ${esc(current(owner+".scene").value.time)}</h2>
+        <p class="hint">使用分镜 ${members.map(s=>s.slice(1)).join("、")} · 环境来源 ${owner}</p>
+        <div class="frame-pair">${panel(owner+".environment")}${panel(owner+".plate")}</div></article>`).join("");
   }else if(step===5){
     const count=p.shots.filter(s=>p.nodes[s+".video"]?.status==="已确认").length;
     content=`<section class="card"><h2>剪辑顺序</h2><ol>${p.shots.map(s=>`<li>${esc(current(s+".scene").value.place)} · ${current(s+".scene").value.seconds} 秒 · ${p.nodes[s+".video"]?.status||"待制作"}</li>`).join("")}</ol>
@@ -92,8 +99,9 @@ function render(){
     if(film && p.nodes["final.film"].status!=="上游已变更")
       content+=`<a class="button primary" download="漫剧成片.mp4" href="/media/${film.value}">下载成片 MP4</a>`;
   }else{
-    const kinds=step===2?["environment","plate"]:step===3?["first","last"]:["video"];
+    const kinds=step===3?["first","last"]:["video"];
     content=p.shots.map(s=>`<article><header class="card"><div>${head(s)}<p>${esc(current(s+".scene").value.plot)}</p></div></header>
+      ${step===3?`<p class="hint">环境来源 · ${esc(p.scene_owners[s])}</p>`:""}
       <div class="${kinds.length===2?"frame-pair":""}">${kinds.map(k=>panel(s+"."+k)).join("")}</div></article>`).join("");
   }
   $("#work").innerHTML=`<h1>${steps[step]}</h1>${content}`;
@@ -178,9 +186,16 @@ document.addEventListener("input",e=>{
   if(note)notes.set(note,el.value);
   if(cfg)config[cfg][config[cfg].mode][f]=el.value;
 });
-document.addEventListener("change",e=>{
+document.addEventListener("change",async e=>{
   const kind=e.target.dataset.mode;
   if(kind){config[kind].mode=e.target.value;settingsPanel();}
+  const shot=e.target.dataset.sceneSource;
+  if(shot&&!pending){
+    pending=true;
+    try{await flush();await send("scene-source",{target:shot,source:e.target.value});message("环境来源已保存，共用该环境的分镜会使用同一张参考图。");}
+    catch(err){message(err.message,true);}
+    finally{pending=false;render();}
+  }
 });
 async function handle(el){
   const a=el.dataset.a,k=el.dataset.k, note=notes.get(k)||"";
@@ -197,7 +212,9 @@ async function handle(el){
   }
   if(a==="edit"&&!edits.has(k)){message("请先编辑描述或分镜内容");return;}
   await flush();
-  if(a==="save-style"){
+  if(a==="group-scenes"){
+    await send("group-scenes");message("已合并同地点、同时间段的场景，优先选用已有环境图。");
+  }else if(a==="save-style"){
     message("风格设定已保存，后续图片和视频将使用此风格。");
   }else if(a==="save"){
     const link=document.createElement("a");link.href="/package?id="+p.id;link.download="comic-project.zip";link.click();

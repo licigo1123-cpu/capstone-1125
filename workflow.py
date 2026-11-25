@@ -27,7 +27,7 @@ def now():
 
 def new(title="未命名漫剧"):
     return dict(schema_version=1, id=uuid4().hex, title=title, story="", style=DEFAULT_STYLE, ratio="9:16",
-                shots=[], nodes={}, updated=now(), revision=0)
+                shots=[], nodes={}, scene_sources={}, updated=now(), revision=0)
 
 
 def words(s):
@@ -69,6 +69,56 @@ def value(p, k):
     return p["nodes"][k]["versions"][-1]["value"]
 
 
+def scene_identity(p, shot):
+    scene = value(p, shot + ".scene")
+    return " ".join(scene["place"].split()).casefold(), scene["time"]
+
+
+def scene_owner(p, shot):
+    links = p.get("scene_sources", {})
+    visited = set()
+    owner = shot
+    while True:
+        if owner not in p["shots"] or owner in visited:
+            raise ValueError("共享场景引用无效或形成循环")
+        visited.add(owner)
+        source = links.get(owner, owner)
+        if source == owner:
+            break
+        owner = source
+    if any(scene_identity(p, s) != scene_identity(p, shot) for s in visited):
+        return shot
+    return owner
+
+
+def environment_key(p, key):
+    if "." in key:
+        shot, kind = key.split(".")
+        if kind in ("environment", "plate"):
+            return scene_owner(p, shot) + "." + kind
+    return key
+
+
+def share_scene(p, shot, source):
+    if shot not in p["shots"] or source not in p["shots"]:
+        raise ValueError("请选择有效的分镜环境来源")
+    if scene_identity(p, shot) != scene_identity(p, source):
+        raise ValueError("地点和时间段相同的分镜才能共用环境")
+    owner = shot if source == shot else scene_owner(p, source)
+    p.setdefault("scene_sources", {})[shot] = owner
+
+
+def group_scenes(p):
+    groups = {}
+    for s in p["shots"]:
+        groups.setdefault(scene_identity(p, s), []).append(s)
+    for members in groups.values():
+        owner = max(members, key=lambda s: (status(p, s + ".plate") == "已确认",
+                    s + ".plate" in p["nodes"], s + ".environment" in p["nodes"], -p["shots"].index(s)))
+        for s in members:
+            p.setdefault("scene_sources", {})[s] = owner
+
+
 def dependencies(p, key):
     owner, kind = key.split(".")
     if kind in FIELDS:
@@ -83,7 +133,7 @@ def dependencies(p, key):
     if kind == "plate":
         return [owner + ".environment"]
     if kind in ("first", "last"):
-        return [owner + "." + f for f in ("scene", "cast", "plate")] + [
+        return [owner + ".scene", owner + ".cast", environment_key(p, owner + ".plate")] + [
             character(n) + ".sheet" for n in value(p, owner + ".cast")]
     if kind == "video":
         return [owner + "." + f for f in ("first", "last", "scene", "dialogue")]
@@ -131,6 +181,7 @@ def status(p, k):
 
 
 def ready(p, k):
+    k = environment_key(p, k)
     allowed(p, k)
     for d in dependencies(p, k):
         if status(p, d) != "已确认":
@@ -138,6 +189,7 @@ def ready(p, k):
 
 
 def version(p, k, v, note="", source="手动", prompt=None):
+    k = environment_key(p, k)
     ready(p, k)
     kind = k.split(".")[1]
     node = p["nodes"].setdefault(k, {"versions": []})
@@ -148,6 +200,7 @@ def version(p, k, v, note="", source="手动", prompt=None):
 
 
 def review(p, k, approve, note):
+    k = environment_key(p, k)
     ready(p, k)
     if k not in p["nodes"] or status(p, k) == "上游已变更":
         raise ValueError("请先按当前输入制作新版本")
@@ -157,6 +210,7 @@ def review(p, k, approve, note):
 
 
 def restore(p, key, index, note=""):
+    key = environment_key(p, key)
     allowed(p, key)
     versions = p["nodes"].get(key, {}).get("versions", [])
     if type(index) is not int or not 0 <= index < len(versions):
@@ -194,6 +248,7 @@ def visual(p, owner):
 
 def execute(p, key, note, models, record_task=lambda _: None):
     import providers as api
+    key = environment_key(p, key)
     if key == "plan":
         if p["shots"]:
             raise ValueError("已有分镜，请新建项目后重新拆镜")
@@ -275,7 +330,7 @@ def execute(p, key, note, models, record_task=lambda _: None):
         else:
             scene = visual(p, owner)
             names = value(p, owner + ".cast")
-            refs = [value(p, owner + ".plate"), *[value(p, character(n) + ".sheet") for n in names]]
+            refs = [value(p, environment_key(p, owner + ".plate")), *[value(p, character(n) + ".sheet") for n in names]]
             prompt = (f'第一张图为环境，后续角色三视图按顺序对应{names}。分镜动作：{scene["plot"]}。'
                       f'只画{"开始" if kind == "first" else "结束"}时刻：{scene[kind]}。保持服装、脸型、光向。')
         prompt += "\n整体视觉风格：" + p.get("style", DEFAULT_STYLE) + "。无文字、字幕、气泡、水印。\n" + note
@@ -287,6 +342,12 @@ def view(p):
     out = copy.deepcopy(p)
     out.setdefault("style", DEFAULT_STYLE)
     out["characters"] = {n: character(n) for n in cast_names(p)}
+    out["scene_owners"] = {s: scene_owner(p, s) for s in p["shots"]}
+    out["scene_candidates"] = {s: list(dict.fromkeys([s, *[out["scene_owners"][t] for t in p["shots"]
+                               if scene_identity(p, s) == scene_identity(p, t)]])) for s in p["shots"]}
+    out["scene_groups"] = {}
+    for s, owner in out["scene_owners"].items():
+        out["scene_groups"].setdefault(owner, []).append(s)
     for k, node in out["nodes"].items():
         node["status"] = status(p, k)
     return out

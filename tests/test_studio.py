@@ -293,6 +293,68 @@ class StudioTests(unittest.TestCase):
             self.assertEqual(revised["note"],"改成冷色灯光")
         self.assertEqual(len(p["nodes"]["S02.environment"]["versions"]),2)
 
+    def test_shared_scene_groups_reuse_one_plate_for_multiple_shots(self):
+        p=wf.new()
+        rows=plan()
+        rows["shots"][2]["scene"]["time"]="夜晚"
+        rows["shots"][3]["scene"]["place"]="教室"
+        wf.install_plan(p,rows)
+        for s in p["shots"]:
+            for field in wf.FIELDS:
+                wf.review(p,s+"."+field,True,"")
+        char=wf.character("小猫")
+        wf.version(p,char+".profile","橘白色小猫")
+        wf.review(p,char+".profile",True,"")
+        wf.version(p,char+".sheet","c"*64+".png")
+        wf.review(p,char+".sheet",True,"")
+        wf.version(p,"S02.environment","黄昏的无人花店")
+        wf.review(p,"S02.environment",True,"")
+        wf.version(p,"S02.plate","a"*64+".png")
+        wf.review(p,"S02.plate",True,"")
+        before=copy.deepcopy(p["nodes"]["S02.plate"])
+        wf.group_scenes(p)
+        self.assertEqual(wf.view(p)["scene_groups"],{"S02":["S01","S02"],"S03":["S03"],"S04":["S04"]})
+        self.assertEqual(p["nodes"]["S02.plate"],before)
+        with patch.object(providers,"image",return_value="b"*64+".png") as image:
+            for s in ("S01","S02"):
+                wf.execute(p,s+".first","",{"text":{"model":"test"},"image":{"model":"test"}})
+                wf.review(p,s+".first",True,"")
+        for call in image.call_args_list:
+            self.assertEqual(call.args[2][0],"a"*64+".png")
+        self.assertNotIn("S01.plate",p["nodes"])
+        self.assertIn("S02.plate",p["nodes"]["S01.first"]["versions"][-1]["inputs"])
+        wf.version(p,"S02.environment","花架布局已修改")
+        for s in ("S01","S02"):
+            self.assertEqual(wf.status(p,s+".first"),"上游已变更")
+        wf.share_scene(p,"S01","S01")
+        self.assertEqual(wf.scene_owner(p,"S01"),"S01")
+        self.assertEqual(wf.scene_owner(p,"S02"),"S02")
+        self.assertRaisesRegex(ValueError,"地点和时间段",wf.share_scene,p,"S01","S03")
+        self.assertRaisesRegex(ValueError,"地点和时间段",wf.share_scene,p,"S01","S04")
+        st.validate(p)
+
+    def test_scene_source_http_routing_and_package_roundtrip(self):
+        p=wf.new()
+        wf.install_plan(p,plan())
+        wf.review(p,"S01.scene",True,"")
+        with st.db() as c:
+            st.save(c,p,fresh=True)
+        state=app.action(dict(op="scene-source",id=p["id"],revision=p["revision"],target="S02",source="S01"))
+        state=app.action(dict(op="edit",id=p["id"],revision=state["project"]["revision"],target="S02.environment",value="共享无人环境"))
+        out=state["project"]
+        self.assertIn("S01.environment",out["nodes"])
+        self.assertNotIn("S02.environment",out["nodes"])
+        self.assertEqual(out["scene_owners"]["S02"],"S01")
+        archive=BytesIO()
+        st.pack(out,archive)
+        imported=st.unpack(archive)
+        self.assertEqual(wf.scene_owner(imported,"S02"),"S01")
+        changed=dict(wf.value(imported,"S02.scene"),place="另一个街区")
+        wf.version(imported,"S02.scene",changed)
+        self.assertEqual(wf.scene_owner(imported,"S02"),"S02")
+        out["scene_sources"]={"S01":"S02","S02":"S01"}
+        self.assertRaisesRegex(ValueError,"循环",st.validate,out)
+
     def test_style_legacy_media_invalidation_and_restore(self):
         p=wf.new()
         wf.install_plan(p,plan())
