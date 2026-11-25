@@ -171,7 +171,7 @@ def execute(p, key, note, models, record_task=lambda _: None):
         instruction = skill("01-storyboard")
         for attempt in range(2):
             try:
-                install_plan(p, api.text(models["text"], instruction, story))
+                install_plan(p, api.plan_story(models["text"], instruction, story))
                 return
             except (ValueError, KeyError, TypeError) as ex:
                 if attempt:

@@ -190,7 +190,11 @@ async function handle(el){
   if(a==="save"){
     const link=document.createElement("a");link.href="/package?id="+p.id;link.download="comic-project.zip";link.click();
     message("项目已保存，正在下载包含历史素材的项目包。");
-  }else if(a==="generate"){await send("generate",{target:k,note});}
+  }else if(a==="generate"){
+    message(k==="plan"?"正在提交拆镜任务，等待文本模型返回……":"正在提交制作任务……");
+    await send("generate",{target:k,note});
+    if(!activeJob() && jobs[0]?.status==="失败")message(jobs[0].message,true);
+  }
   else if(a==="approve"||a==="reject"){await send("review",{target:k,note,approve:a==="approve"});message("审核意见已保存");}
   else if(a==="restore"){await send("restore",{target:k,index:Number(el.dataset.i),note});$("#dialog").close();message("已恢复为待审核的新版本");}
   else if(a==="edit"){message("编辑已保存为新版本");}

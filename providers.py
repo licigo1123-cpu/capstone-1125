@@ -14,6 +14,7 @@ from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
 import storage as st
+import storyboard
 
 H3 = Path(os.getenv("H3_RUNTIME", st.ROOT.parent / "h3-runtime")).resolve()
 IMAGE = Path(os.getenv("H3_IMAGE_RUNTIME", st.ROOT.parent / "h3-image-runtime")).resolve()
@@ -93,12 +94,36 @@ def request(url, body=None, key="", typ="application/json", binary=False):
         raise RuntimeError(f"模型接口 HTTP {e.code}：{msg[:500]}") from e
 
 
+def local_text(cfg, instruction, material):
+    body = dict(model=cfg["model"],
+                messages=[{"role":"system", "content":instruction}, {"role":"user", "content":material}],
+                stream=False, think=False, keep_alive=0,
+                options=dict(temperature=0.1, num_ctx=8192, num_predict=4096))
+    response = request(cfg["url"] + "/api/chat", body)
+    if response.get("done_reason") == "length":
+        raise ValueError("Qwen 输出达到长度上限，请缩短原文后重试")
+    raw = response.get("message", {}).get("content")
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("Qwen 没有返回正文")
+    return raw
+
+
+def plan_story(cfg, instruction, material):
+    if cfg["mode"] != "local":
+        return text(cfg, instruction, material)
+    # Remove the JSON output contract. Retry messages retain only the validation feedback.
+    feedback = instruction.partition("上次结构校验失败：")[2]
+    prompt = storyboard.INSTRUCTION
+    if feedback:
+        prompt += "\n上次表格校验失败：" + feedback
+    return storyboard.parse(local_text(cfg, prompt, material))
+
+
 def text(cfg, instruction, material):
     messages = [{"role":"system", "content":instruction}, {"role":"user", "content":material}]
     body = dict(model=cfg["model"], messages=messages)
     if cfg["mode"] == "local":
-        body.update(stream=False, think=False, keep_alive=0, options=dict(temperature=0.1, num_ctx=8192, num_predict=4096))
-        raw = request(cfg["url"] + "/api/chat", body)["message"]["content"]
+        raw = local_text(cfg, instruction, material)
     else:
         body["response_format"] = {"type":"json_object"}
         raw = request(cfg["url"] + "/chat/completions", body, cfg.get("key"))["choices"][0]["message"]["content"]

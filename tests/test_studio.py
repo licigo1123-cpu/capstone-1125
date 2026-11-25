@@ -13,6 +13,7 @@ import app
 import providers
 import storage as st
 import workflow as wf
+import storyboard
 
 
 def plan():
@@ -79,7 +80,7 @@ class StudioTests(unittest.TestCase):
         p=app.action(dict(op="save",id=p["id"],revision=p["revision"],title="片名",story="一只小猫"))["project"]
         invalid=plan()
         invalid["shots"][0]["scene"]["seconds"]=12
-        with patch.object(providers,"text",side_effect=[invalid,plan()]) as model:
+        with patch.object(providers,"plan_story",side_effect=[invalid,plan()]) as model:
             app.action(dict(op="generate",id=p["id"],revision=p["revision"],target="plan"))
             for _ in range(100):
                 time.sleep(.01)
@@ -113,6 +114,59 @@ class StudioTests(unittest.TestCase):
         self.assertEqual(wf.status(p,"S01.first"),"上游已变更")
         self.assertRaises(ValueError,wf.review,p,"S01.first",True,"")
         self.assertEqual(len(p["nodes"][char+".profile"]["versions"]),2)
+
+    def shot_table(self, count=4):
+        return "| 镜号 | 地点 | 时段 | 出镜角色 | 动作与运镜 | 开始画面 | 结束画面 | 对白 |\n" + \
+            "| --- | --- | --- | --- | --- | --- | --- | --- |\n" + "\n".join(
+                f"| {i} | 花店 | 黄昏 | 小猫、店主 | 小猫走到花架旁 | 门边蹲坐 | 花架前停下 | 店主：‘欢迎’；旁白：花店要关门了。 |"
+                for i in range(1,count+1))
+
+    def test_local_table_plan_from_raw_model_response(self):
+        cfg=dict(mode="local", model="qwen3.5:4b", url="http://127.0.0.1:11434")
+        p=wf.new()
+        p["story"]="一只小猫进入了花店。"
+        with patch.object(providers,"request",return_value={"message":{"content":self.shot_table()}}) as req:
+            wf.execute(p,"plan","",{"text":cfg})
+        sent=req.call_args.args[1]
+        self.assertEqual(sent["messages"][1]["content"],p["story"])
+        self.assertNotIn("format",sent)
+        self.assertIn("不要输出 JSON",sent["messages"][0]["content"])
+        self.assertEqual(len(p["shots"]),4)
+        self.assertEqual(sum(wf.value(p,s+".scene")["seconds"] for s in p["shots"]),60)
+        self.assertEqual(wf.value(p,"S01.dialogue")[1]["speaker"],"旁白")
+        self.assertEqual(wf.value(p,"S01.cast"),["小猫","店主"])
+        st.validate(p)
+
+    def test_table_lengths_and_invalid_rows(self):
+        for count in (4,5,6):
+            p=wf.new()
+            wf.install_plan(p,storyboard.parse(self.shot_table(count)))
+            self.assertEqual(sum(wf.value(p,s+".scene")["seconds"] for s in p["shots"]),60)
+        for text in (self.shot_table(3),self.shot_table().replace("| 2 |","| 3 |"),
+                     self.shot_table().replace("门边蹲坐 |", "门边 | 蹲坐 |")):
+            self.assertRaises(ValueError,storyboard.parse,text)
+
+    def test_bad_local_output_retries_without_partial_plan(self):
+        cfg=dict(mode="local", model="qwen3.5:4b", url="http://127.0.0.1:11434")
+        p=wf.new()
+        p["story"]="小猫遇到店主。"
+        responses=[{"message":{"content":'{"shots":[{scene: "坏 JSON"}]}'}},
+                   {"message":{"content":self.shot_table()}}]
+        with patch.object(providers,"request",side_effect=responses) as req:
+            wf.execute(p,"plan","",{"text":cfg})
+        self.assertEqual(len(p["shots"]),4)
+        self.assertIn("上次表格校验失败",req.call_args.args[1]["messages"][0]["content"])
+        p=wf.new()
+        p["story"]="小猫遇到店主。"
+        with patch.object(providers,"request",return_value={"done_reason":"length","message":{"content":self.shot_table()}}):
+            self.assertRaisesRegex(ValueError,"长度上限",wf.execute,p,"plan","",{"text":cfg})
+        self.assertEqual((p["shots"],p["nodes"]),([],{}))
+
+    def test_api_plan_retains_json_protocol(self):
+        cfg=dict(mode="api",model="test",url="https://example.test/v1")
+        with patch.object(providers,"request",return_value={"choices":[{"message":{"content":json.dumps(plan())}}]}) as req:
+            self.assertEqual(providers.plan_story(cfg,"instruction","story"),plan())
+        self.assertEqual(req.call_args.args[1]["response_format"],{"type":"json_object"})
 
     def test_minimax_and_local_video_bind_both_anchors(self):
         keys=["a"*64+".png","b"*64+".png"]
