@@ -227,32 +227,28 @@ def video_api_base(url, version):
 
 def apimart_video(cfg, prompt, refs, seconds, record_task):
     model = cfg["model"]
-    if model == "seedance-1-0-pro-fast":
-        raise ValueError("seedance-1-0-pro-fast 仅支持首帧，不支持本工作台的首尾帧生成。"
-                         "请在连接设置中选择 seedance-1-0-pro-quality（每镜 2–12 秒）"
-                         "或 seedance-2.0（每镜 4–15 秒）；本次未提交视频生成任务。")
-    if model == "seedance-1-0-pro-quality":
+    if model in ("seedance-1-0-pro-fast", "seedance-1-0-pro-quality"):
         low, high, ratio_field = 2, 12, "aspect_ratio"
     elif model in ("seedance-2.0", "seedance-2.0-fast", "seedance-2.0-mini"):
         low, high, ratio_field = 4, 15, "size"
     else:
-        raise ValueError("APIMart 视频目前支持 seedance-1-0-pro-quality、seedance-2.0、"
+        raise ValueError("APIMart 视频目前支持 seedance-1-0-pro-fast、seedance-1-0-pro-quality、seedance-2.0、"
                          "seedance-2.0-fast、seedance-2.0-mini；请核对连接设置中的模型名称。")
     if type(seconds) is not int or not low <= seconds <= high:
         raise ValueError(f"{model} 每镜支持 {low}–{high} 整秒，请修改分镜时长后重新审核；本次未提交视频生成任务。")
-    if len(refs) != 2:
-        raise ValueError("视频生成需要已审核的首帧和尾帧")
+    if len(refs) != 1:
+        raise ValueError("视频生成只接受一张已审核的首帧参考图")
     for name in refs:
         if st.asset(name).stat().st_size > 30 * 1024**2:
             raise ValueError("APIMart 参考图不能超过 30 MiB，请缩小图片后重试")
     base = video_api_base(cfg["url"], "v1")
     images = []
-    for role, name in zip(("first_frame", "last_frame"), refs):
+    for name in refs:
         data, typ = multipart({}, [name], file_field="file")
         url = request(base + "/uploads/images?retention_days=3", data, cfg.get("key"), typ).get("url")
         if not isinstance(url, str) or urlsplit(url).scheme not in ("http", "https"):
             raise ValueError("APIMart 参考图上传未返回有效地址；本次未提交视频生成任务。")
-        images.append(dict(role=role, url=url))
+        images.append(dict(role="first_frame", url=url))
     body = dict(model=model, prompt=prompt, duration=seconds, resolution="720p", image_with_roles=images)
     body[ratio_field] = "9:16"
     response = request(base + "/videos/generations", body, cfg.get("key"))
@@ -272,6 +268,8 @@ def apimart_video(cfg, prompt, refs, seconds, record_task):
 
 
 def video(cfg, prompt, refs, seconds, record_task):
+    if len(refs) != 1:
+        raise ValueError("视频生成只接受一张已审核的首帧参考图")
     with tempfile.TemporaryDirectory(dir=st.DATA) as td:
         out = Path(td)/"shot.mp4"
         if cfg["mode"] == "local":
@@ -280,7 +278,7 @@ def video(cfg, prompt, refs, seconds, record_task):
                  "--turbo-lora","models/turbo/minimax_h3_fl2v_turbo_4step_v1.0_768p_bf16.safetensors",
                  "--sigma-shift-video",6,"--sigma-shift-audio",3,"--low-memory","--stream-blocks",
                  "--stream-block-group-size",1,"--no-block-cache","--resolution","288x512","--aspect",9,16,
-                 "--image",st.asset(refs[0]),"--anchor","first","--image",st.asset(refs[1]),"--anchor","last",
+                 "--image",st.asset(refs[0]),"--anchor","first",
                  "--duration",seconds,"--steps",5,"--memory-limit-gb",os.getenv("H3_MEMORY_GB","20"),
                  "--require-muxed-mp4","--output",out], H3)
         elif (urlsplit(cfg["url"]).hostname or "").lower() == "api.apimart.ai" or cfg["model"].lower().startswith("seedance-"):
@@ -288,8 +286,7 @@ def video(cfg, prompt, refs, seconds, record_task):
         else:
             base = video_api_base(cfg["url"], "v2")
             content = [{"type":"text","text":prompt}]
-            for role, name in zip(("first_frame","last_frame"), refs):
-                content.append({"type":"image_url","role":role,"image_url":{"url":data_url(name)}})
+            content.append({"type":"image_url","role":"first_frame","image_url":{"url":data_url(refs[0])}})
             task = request(base+"/video_generation", dict(model=cfg["model"], content=content,
                            duration=seconds, resolution="768P", ratio="9:16"), cfg.get("key"))["task_id"]
             record_task(str(task))

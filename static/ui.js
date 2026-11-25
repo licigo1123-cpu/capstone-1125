@@ -1,7 +1,7 @@
 "use strict";
 const $ = selector => document.querySelector(selector);
 const esc = text => String(text ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
-const steps = ["剧本分镜","角色设定","场景环境","首尾关键帧","分镜视频","成片导出"];
+const steps = ["剧本分镜","角色设定","场景环境","首帧关键帧","分镜视频","成片导出"];
 const labels = {scene:"场景与剧情",cast:"出镜角色",dialogue:"独立对白",profile:"角色设定卡",environment:"环境设定",
   sheet:"角色三视图",plate:"无人环境参考图",first:"首帧",last:"尾帧",video:"镜头视频",film:"最终成片"};
 const textKinds = ["scene","cast","dialogue","profile","environment"];
@@ -114,7 +114,7 @@ function render(){
   let content="";
   if(step===0){
     content=`<section class="card"><h2>风格设定</h2><textarea id="style" aria-label="风格设定" rows="3" placeholder="例如：水彩绘本风格，柔和低饱和配色，手绘纸张质感……">${esc(edits.get("style")??p.style??"漫画插画")}</textarea>
-      <p class="hint">用于角色三视图、场景图、首尾关键帧和视频。修改风格后，相关已有素材需重新制作。</p><div class="actions">${button("保存风格","save-style")}</div></section>
+      <p class="hint">用于角色三视图、场景图、首帧关键帧和视频。修改风格后，相关已有素材需重新制作。</p><div class="actions">${button("保存风格","save-style")}</div></section>
       <section class="card"><h2>剧本原文</h2><textarea class="story" id="story" aria-label="剧本原文" ${p.shots.length?"readonly":""} placeholder="粘贴故事或小说原文……">${esc(edits.get("story")??p.story)}</textarea>
       <div class="actions">${p.shots.length?`<a class="button" download="storyboard.json" href="/storyboard?id=${p.id}">下载分镜与对白 JSON</a>`:button("拆分为分镜","generate","plan",true)}
       <small>每镜 10–15 秒</small></div></section>`+
@@ -139,9 +139,9 @@ function render(){
     if(film && p.nodes["final.film"].status!=="上游已变更")
       content+=`<a class="button primary" download="漫剧成片.mp4" href="/media/${film.value}">下载成片 MP4</a>`;
   }else{
-    const kinds=step===3?["first","last"]:["video"];
+    const kinds=step===3?["first"]:["video"];
     content=p.shots.map(s=>`<article><header class="card"><div>${head(s)}<p>${esc(current(s+".scene").value.plot)}</p></div></header>
-      ${step===3?`<p class="hint">环境来源 · ${sceneLabel(s)}</p>`:""}
+      ${step===3?`<p class="hint">环境来源 · ${sceneLabel(s)}。每镜仅生成一张首帧，审核通过后用于视频制作。</p>`:'<p class="hint">仅参考本镜已审核的首帧，结合剧情、对白和时长生成视频。</p>'}
       <div class="${kinds.length===2?"frame-pair":""}">${kinds.map(k=>panel(s+"."+k)).join("")}</div></article>`).join("");
   }
   $("#work").innerHTML=`<h1>${steps[step]}</h1>${content}`;
@@ -208,7 +208,7 @@ function settingsPanel(){
     return `<fieldset><legend>${serviceNames[kind]}</legend><label>来源<select data-mode="${kind}"><option value="local" ${remote?"":"selected"}>${localNames[kind]}</option>
     <option value="api" ${remote?"selected":""}>${apiName}</option></select></label>
     ${editable?["url","model",...(remote?["key"]:[])].map(f=>`<label>${{url:"基础地址",model:"模型名称",key:"API Key"}[f]}<input type="${f==="key"?"password":"text"}" data-cfg="${kind}" data-f="${f}" value="${esc(d[f]||"")}" placeholder="${f==="key"&&d.has_key?"已配置，留空沿用":""}"></label>`).join(""):"<p>使用本机已安装的 MLX 运行时和权重。</p>"}
-    ${kind==="video"&&remote?'<p class="hint">APIMart：基础地址 https://api.apimart.ai/v1。首尾帧可选 seedance-1-0-pro-quality（2–12 秒）或 seedance-2.0 / seedance-2.0-fast / seedance-2.0-mini（4–15 秒）。seedance-1-0-pro-fast 仅支持首帧。MiniMax 官方：基础地址 https://api.minimax.io，模型 MiniMax-H3（4–15 秒）。</p>':""}</fieldset>`;
+    ${kind==="video"&&remote?'<p class="hint">视频仅参考首帧。APIMart：基础地址 https://api.apimart.ai/v1，可选 seedance-1-0-pro-fast / seedance-1-0-pro-quality（2–12 秒）或 seedance-2.0 / seedance-2.0-fast / seedance-2.0-mini（4–15 秒）。MiniMax 官方：基础地址 https://api.minimax.io，模型 MiniMax-H3（4–15 秒）。</p>':""}</fieldset>`;
   }).join("")+button("保存连接","config-save","",true));
 }
 async function projects(){

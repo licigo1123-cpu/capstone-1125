@@ -159,7 +159,7 @@ def dependencies(p, key):
         return [owner + ".scene", owner + ".cast", environment_key(p, owner + ".plate")] + [
             character(n) + ".sheet" for n in value(p, owner + ".cast")]
     if kind == "video":
-        return [owner + "." + f for f in ("first", "last", "scene", "dialogue")]
+        return [owner + "." + f for f in ("first", "scene", "dialogue")]
     if key == "final.film":
         return [s + ".video" for s in p["shots"]]
     raise ValueError("未知制作步骤")
@@ -182,7 +182,10 @@ def stamps(p, key):
 
 def inputs_match(p, key, snapshot):
     saved = snapshot["inputs"]
-    if set(saved) != set(dependencies(p, key)):
+    expected = set(dependencies(p, key))
+    # Keep the actual provenance of videos made by the former two-frame workflow.
+    legacy = expected | {key.split(".")[0] + ".last"} if key.endswith(".video") else expected
+    if set(saved) not in (expected, legacy):
         return False
     for dep, revision in saved.items():
         versions = p["nodes"].get(dep, {}).get("versions", [])
@@ -285,8 +288,10 @@ def execute(p, key, note, models, record_task=lambda _: None):
                 if attempt:
                     raise ValueError(f"分镜结构校验失败：{ex}") from ex
                 instruction += f"\n上次结构校验失败：{ex}。请按规范重新输出完整对象。"
-    ready(p, key)
     owner, kind = key.split(".")
+    if kind == "last":
+        raise ValueError("关键帧已改为仅生成首帧，请在首帧关键帧页面制作；历史尾帧仍保留在项目包中。")
+    ready(p, key)
     model = models["text"]
     if kind in FIELDS:
         words(note)
@@ -335,13 +340,13 @@ def execute(p, key, note, models, record_task=lambda _: None):
     elif kind == "video":
         model = models["video"]
         scene = visual(p, owner)
-        prompt = f'{scene["plot"]}。由{scene["first"]}过渡至{scene["last"]}，保持人物与场景连续。'
+        prompt = f'以参考首帧为起始画面。{scene["plot"]}。由{scene["first"]}发展至{scene["last"]}，保持人物与场景连续。'
         dialogue = value(p, owner + ".dialogue")
         if dialogue:
             prompt += "音轨对白（不要显示字幕）：" + "；".join(x["speaker"] + "：" + x["text"] for x in dialogue)
         prompt += "\n" + note
         prompt += "\n整体视觉风格：" + p.get("style", DEFAULT_STYLE)
-        v = api.video(model, prompt, [value(p, owner + "." + f) for f in ("first", "last")],
+        v = api.video(model, prompt, [value(p, owner + ".first")],
                       scene["seconds"], record_task)
     else:
         model = models["image"]

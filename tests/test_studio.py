@@ -596,8 +596,8 @@ class StudioTests(unittest.TestCase):
             self.assertRaisesRegex(ValueError,"混入无关特征",wf.execute,p,key,"",{"text":{"model":"test"}})
         self.assertEqual(p,before)
 
-    def test_minimax_and_local_video_bind_both_anchors(self):
-        keys=["a"*64+".png","b"*64+".png"]
+    def test_minimax_and_local_video_reference_only_first_frame(self):
+        keys=["a"*64+".png"]
         for k in keys:
             st.asset(k).write_bytes(k.encode())
         mp4=b"\x00\x00\x00\x18ftypisom"+b"test"
@@ -609,29 +609,86 @@ class StudioTests(unittest.TestCase):
                 body=req.call_args_list[0].args[1]
                 self.assertEqual(req.call_args_list[0].args[0],"https://example.test/v2/video_generation")
                 self.assertEqual(req.call_args_list[1].args[0],"https://example.test/v2/query/video_generation/m1")
-                self.assertEqual([x["role"] for x in body["content"][1:]],["first_frame","last_frame"])
-                self.assertNotEqual(body["content"][1]["image_url"],body["content"][2]["image_url"])
+                self.assertEqual([x["role"] for x in body["content"][1:]],["first_frame"])
                 self.assertEqual((task,body["ratio"],body["duration"]),(["m1"],"9:16",12))
                 self.assertTrue(st.asset(result).exists())
         def fake_run(cmd,cwd):
-            self.assertEqual([cmd[i+1] for i,x in enumerate(cmd) if x=="--anchor"],["first","last"])
+            self.assertEqual([cmd[i+1] for i,x in enumerate(cmd) if x=="--anchor"],["first"])
             self.assertEqual([cmd[i+1] for i,x in enumerate(cmd) if x=="--image"],list(map(st.asset,keys)))
             Path(cmd[-1]).write_bytes(mp4)
         with patch.object(providers,"run",side_effect=fake_run):
             providers.video({"mode":"local"},"剧情",keys,12,task.append)
 
-    def test_apimart_video_uploads_both_frames_and_polls_its_own_protocol(self):
-        keys=["a"*64+".png","b"*64+".png"]
+    def test_first_frame_workflow_needs_no_tail_and_preserves_legacy_history(self):
+        p=wf.new()
+        wf.install_plan(p,plan())
+        for s in p["shots"]:
+            for field in wf.FIELDS:
+                wf.review(p,s+"."+field,True,"")
+        char=wf.character("小猫")
+        src=st.DATA/"fixture.png"
+        src.write_bytes(b"\x89PNG\r\n\x1a\nfirst")
+        first=st.persist(src,"png")
+        src.write_bytes(b"\x89PNG\r\n\x1a\ntail")
+        tail=st.persist(src,"png")
+        clip=st.DATA/"fixture.mp4"
+        clip.write_bytes(b"\x00\x00\x00\x18ftypisomtest")
+        video=st.persist(clip,"mp4")
+        for key in (char+".profile",char+".sheet","S01.environment","S01.plate","S01.first"):
+            wf.version(p,key,"描述" if key.endswith((".profile",".environment")) else first)
+            if key != "S01.first":
+                wf.review(p,key,True,"")
+        self.assertRaisesRegex(ValueError,"分镜1的首帧",wf.ready,p,"S01.video")
+        wf.review(p,"S01.first",True,"")
+        self.assertNotIn("S01.last",p["nodes"])
+        with patch.object(providers,"video",return_value=video) as model:
+            wf.execute(p,"S01.video","",{"text":{},"video":{"model":"test"}})
+        self.assertEqual(model.call_args.args[2],[first])
+        self.assertIn("以参考首帧为起始画面",model.call_args.args[1])
+        self.assertNotIn("S01.last",p["nodes"]["S01.video"]["versions"][-1]["inputs"])
+        wf.review(p,"S01.video",True,"")
+        # An unreviewed historical tail is irrelevant to newly generated videos.
+        wf.version(p,"S01.last",tail)
+        self.assertEqual(wf.status(p,"S01.video"),"已确认")
+        wf.ready(p,"S01.video")
+        with patch.object(providers,"image") as image:
+            self.assertRaisesRegex(ValueError,"仅生成首帧",wf.execute,p,"S01.last","",{"text":{}})
+            image.assert_not_called()
+        # Old video versions still record and validate their original two-frame inputs.
+        wf.review(p,"S01.last",True,"")
+        p["nodes"]["S01.video"]["versions"][-1]["inputs"]["S01.last"]=1
+        self.assertEqual(wf.status(p,"S01.video"),"已确认")
+        st.validate(p)
+        bundle=BytesIO()
+        st.pack(p,bundle)
+        restored=st.unpack(bundle)
+        self.assertEqual(restored["nodes"],p["nodes"])
+        self.assertEqual(wf.status(restored,"S01.video"),"已确认")
+        self.assertTrue(st.asset(tail).exists())
+        wf.version(restored,"S01.first",tail)
+        self.assertEqual(wf.status(restored,"S01.video"),"上游已变更")
+
+    def test_video_adapters_reject_extra_reference_images(self):
+        for mode in ("local","api"):
+            for refs in ([],["first","last"]):
+                with self.subTest(mode=mode,refs=refs),patch.object(providers,"request") as req,patch.object(providers,"run") as run:
+                    self.assertRaisesRegex(ValueError,"只接受一张",providers.video,{"mode":mode},"剧情",refs,12,lambda _:None)
+                    req.assert_not_called()
+                    run.assert_not_called()
+
+    def test_apimart_video_uploads_only_first_frame_and_polls_its_own_protocol(self):
+        keys=["a"*64+".png"]
         for key in keys:
             st.asset(key).write_bytes(key.encode())
         mp4=b"\x00\x00\x00\x18ftypisom"+b"test"
-        for model, seconds, field in (("seedance-1-0-pro-quality",12,"aspect_ratio"),
+        for model, seconds, field in (("seedance-1-0-pro-fast",12,"aspect_ratio"),
+                                      ("seedance-1-0-pro-quality",12,"aspect_ratio"),
                                       ("seedance-2.0",15,"size"),
                                       ("seedance-2.0-fast",15,"size"),
                                       ("seedance-2.0-mini",15,"size")):
             for suffix in ("", "/v1/", "/v2"):
                 recorded=[]
-                responses=[{"url":"https://cdn.example/first.png"},{"url":"https://cdn.example/last.png"},
+                responses=[{"url":"https://cdn.example/first.png"},
                            {"data":[{"task_id":"task/a"}]},{"data":{"status":"processing"}},
                            {"data":{"status":"completed","result":{"videos":[{"url":["https://cdn.example/video.mp4"]}]}}},mp4]
                 cfg=dict(mode="api",model=model,url="https://api.apimart.ai"+suffix,key="TEST-ONLY")
@@ -639,7 +696,7 @@ class StudioTests(unittest.TestCase):
                     result=providers.video(cfg,"分镜剧情",keys,seconds,recorded.append)
                 self.assertEqual(st.asset(result).read_bytes(),mp4)
                 self.assertEqual(recorded,["task/a"])
-                for i in (0,1):
+                for i in (0,):
                     args=req.call_args_list[i].args
                     self.assertEqual(args[0],"https://api.apimart.ai/v1/uploads/images?retention_days=3")
                     self.assertIn(b'name="file"',args[1])
@@ -647,26 +704,25 @@ class StudioTests(unittest.TestCase):
                     self.assertNotIn(b'image[]',args[1])
                     self.assertEqual(args[2],"TEST-ONLY")
                     self.assertIn("boundary=",args[3])
-                self.assertEqual(req.call_args_list[2].args[0],"https://api.apimart.ai/v1/videos/generations")
-                body=req.call_args_list[2].args[1]
+                self.assertEqual(req.call_args_list[1].args[0],"https://api.apimart.ai/v1/videos/generations")
+                body=req.call_args_list[1].args[1]
                 self.assertEqual((body["model"],body["duration"],body[field],body["resolution"]),(model,seconds,"9:16","720p"))
                 self.assertEqual(body["prompt"],"分镜剧情")
-                self.assertEqual(body["image_with_roles"],[{"role":"first_frame","url":"https://cdn.example/first.png"},
-                                                         {"role":"last_frame","url":"https://cdn.example/last.png"}])
+                self.assertEqual(body["image_with_roles"],[{"role":"first_frame","url":"https://cdn.example/first.png"}])
                 self.assertNotIn("ratio",body)
                 self.assertNotIn("content",body)
-                self.assertEqual(req.call_args_list[3].args[0],"https://api.apimart.ai/v1/tasks/task%2Fa")
-                self.assertEqual(req.call_args_list[5].kwargs,{"binary":True})
+                self.assertEqual(req.call_args_list[2].args[0],"https://api.apimart.ai/v1/tasks/task%2Fa")
+                self.assertEqual(req.call_args_list[4].kwargs,{"binary":True})
 
     def test_apimart_video_rejects_incompatible_models_and_duration_before_upload(self):
-        for model,seconds,error in (("seedance-1-0-pro-fast",12,"仅支持首帧"),
+        for model,seconds,error in (("seedance-1-0-pro-fast",15,"2–12"),
                                     ("seedance-1-0-pro-quality",15,"2–12"),
                                     ("seedance-2.0",16,"4–15"),
                                     ("seedance-2.0",12.5,"整秒"),
                                     ("not-a-supported-model",12,"模型名称")):
             cfg=dict(mode="api",model=model,url="https://api.apimart.ai/v1")
             with self.subTest(model=model,seconds=seconds),patch.object(providers,"request") as req:
-                self.assertRaisesRegex(ValueError,error,providers.video,cfg,"剧情",["missing-first","missing-last"],seconds,lambda _:None)
+                self.assertRaisesRegex(ValueError,error,providers.video,cfg,"剧情",["missing-first"],seconds,lambda _:None)
                 req.assert_not_called()
         self.assertEqual(providers.video_api_base("https://proxy.test/api/v1/","v2"),"https://proxy.test/api/v2")
         for url in ("file:///tmp/video","https://example.test/v1?key=secret","https://example.test/#v1"):
@@ -674,13 +730,13 @@ class StudioTests(unittest.TestCase):
 
     def test_apimart_video_failures_keep_remote_task_and_do_not_resubmit(self):
         cfg=dict(mode="api",model="seedance-1-0-pro-quality",url="https://api.apimart.ai/v1")
-        keys=["a"*64+".png","b"*64+".png"]
+        keys=["a"*64+".png"]
         for key in keys:
             st.asset(key).write_bytes(b"fixture")
         for status in ("failed","cancelled","expired","processing"):
             recorded=[]
             result={"data":{"status":status,"error":{"message":"generation failed"}}}
-            responses=[{"url":"https://cdn.example/first"},{"url":"https://cdn.example/last"},{"data":[{"task_id":"saved-id"}]}]+[result]*450
+            responses=[{"url":"https://cdn.example/first"},{"data":[{"task_id":"saved-id"}]}]+[result]*450
             with self.subTest(status=status),patch.object(providers,"request",side_effect=responses) as req,patch.object(providers.time,"sleep"):
                 self.assertRaisesRegex(ValueError,"saved-id",providers.video,cfg,"剧情",keys,12,recorded.append)
             self.assertEqual(recorded,["saved-id"])
@@ -709,12 +765,12 @@ class StudioTests(unittest.TestCase):
             return st.persist(img,"png")
         def make_video(cfg,prompt,refs,seconds,remote):
             self.assertIn(p["style"],prompt)
-            self.assertEqual(len(refs),2)
+            self.assertEqual(len(refs),1)
             src=st.DATA/"clip.mp4"
             providers.run([providers.FF,"-v","error","-f","lavfi","-i","color=green:s=90x160:r=24",
                            "-f","lavfi","-i","sine=frequency=330","-t",seconds,"-c:v","libx264","-c:a","aac",src])
             return st.persist(src,"mp4")
-        order=[char+".profile",char+".sheet"]+[s+"."+k for s in p["shots"] for k in ("environment","plate","first","last","video")]
+        order=[char+".profile",char+".sheet"]+[s+"."+k for s in p["shots"] for k in ("environment","plate","first","video")]
         def text_result(cfg,instruction,material):
             return cat_profile() if json.loads(material).get("name")=="小猫" else {"description":"环境描述"}
         with patch.object(providers,"text",side_effect=text_result),patch.object(providers,"image",side_effect=make_image),patch.object(providers,"video",side_effect=make_video):
