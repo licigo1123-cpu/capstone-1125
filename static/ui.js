@@ -105,6 +105,29 @@ function panel(key) {
   ${kind==="environment"?`<div class="actions">${button(v?"重新自动生成初稿":"自动生成初稿","generate",key,true)}</div><p class="hint">根据本镜已确认的场景生成地点、时段、布局和光线描述，可编辑并审核后生成环境参考图。</p>`:""}
   ${content}${feedback}<div class="actions">${actions.join("")}</div></section>`;
 }
+function addDirectory(work){
+  const headings=Array.from(work.querySelectorAll("h2, .film h3, :scope > details > summary"));
+  if(!headings.length)return;
+  const bar=document.createElement("label");
+  bar.className="section-directory";
+  bar.append("本页目录");
+  const select=document.createElement("select");
+  select.add(new Option("快速定位…",""));
+  headings.forEach((heading,index)=>select.add(new Option(heading.textContent,String(index))));
+  select.addEventListener("change",()=>{
+    if(select.value==="")return;
+    const target=headings[Number(select.value)];
+    if(target.tagName==="SUMMARY")target.parentElement.open=true;
+    target.tabIndex=-1;
+    target.focus({preventScroll:true});
+    const top=window.scrollY+target.getBoundingClientRect().top-bar.offsetHeight-16-
+      (matchMedia("(max-width:900px)").matches?document.querySelector("aside").offsetHeight:0);
+    window.scrollTo({top});
+    select.value="";
+  });
+  bar.append(select);
+  work.querySelector("h1").after(bar);
+}
 function render(){
   clearTimeout(timer);
   $("#title").value=edits.get("title")??p.title;
@@ -147,6 +170,7 @@ function render(){
   }
   $("#work").innerHTML=`<h1>${steps[step]}</h1>${content}`;
   if(jobs.length) $("#work").insertAdjacentHTML("beforeend",`<details><summary>制作任务记录</summary>${jobs.map(j=>`<p>${esc(targetLabel(j.target))} · ${esc(j.status)} ${esc(humanMessage(j.message))} ${j.remote_id?" · 远端 "+esc(j.remote_id):""}</p>`).join("")}</details>`);
+  addDirectory($("#work"));
   const job=activeJob();
   if(job){
     message(`${targetLabel(job.target)} · ${job.status}，关闭提示后可切换步骤查看。`,false,false);
