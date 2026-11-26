@@ -745,6 +745,25 @@ class StudioTests(unittest.TestCase):
             self.assertRaisesRegex(ValueError,"上传未返回有效地址",providers.video,cfg,"剧情",keys,12,lambda _:None)
             self.assertEqual(req.call_count,1)
 
+    def test_manual_video_import_and_review_without_first_frame(self):
+        p=wf.new()
+        wf.install_plan(p,plan())
+        with st.db() as c:
+            st.save(c,p,fresh=True)
+        url=f"/shot-video?id={p['id']}&revision={p['revision']}&target=S01.video"
+        self.assertEqual(self.http("POST",url,b"invalid","video/mp4")[0],400)
+        clip=st.DATA/"sample.mp4"
+        providers.run([providers.FF,"-v","error","-f","lavfi","-i","color=s=90x160","-t","1",clip])
+        raw=clip.read_bytes()
+        code,body=self.http("POST",url,raw,"video/mp4")
+        self.assertEqual(code,200,body)
+        project=json.loads(body)["project"]
+        self.assertEqual(wf.status(project,"S01.video"),"待审核")
+        self.assertEqual(st.asset(wf.value(project,"S01.video")).read_bytes(),raw)
+        wf.review(project,"S01.video",True,"")
+        self.assertEqual(wf.status(project,"S01.video"),"已确认")
+        self.assertEqual(self.http("POST",url,raw,"video/mp4")[0],400)
+
     def test_full_production_export_and_archive(self):
         p=wf.new("测试短片")
         p["style"]="水彩绘本，柔和低饱和配色"

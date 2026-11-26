@@ -95,7 +95,8 @@ function panel(key) {
   const actions=[];
   if(textual) actions.push(button("保存编辑","edit",key));
   if(kind==="profile"||kind==="environment") {
-    if(v) actions.push(button("按建议修改","generate",key));
+    if(kind==="video") actions.push(button("手动导入 MP4","shot-import",key));
+  if(v) actions.push(button("按建议修改","generate",key));
   }else if(!["scene","cast","dialogue"].includes(kind)) actions.push(button(v?"按当前输入重做":"生成"+labels[kind],"generate",key,!v));
   else actions.push(button("按建议修改","generate",key));
   if(v) actions.push(button("审核通过","approve",key),button("退回修改","reject",key),button("历史版本 · "+node.versions.length,"versions",key));
@@ -244,6 +245,7 @@ async function handle(el){
   if(a==="versions"){versions(k);return;}
   if(a==="settings"){config=await api("/settings");settingsPanel();return;}
   if(a==="config-save"){await post({op:"settings",settings:config});$("#dialog").close();message("连接设置已保存");return;}
+  if(a==="shot-import"){const input=$("#shot-upload");input.dataset.target=k;input.click();return;}
   if(a==="import"){await flush();$("#upload").click();return;}
   if(a==="projects"){await flush();await projects();return;}
   if(a==="open"||a==="new"){
@@ -282,6 +284,18 @@ document.addEventListener("click",async e=>{
   pending=true;
   try{await handle(el);}catch(err){message(err.message,true);}
   finally{pending=false;}
+});
+$("#shot-upload").addEventListener("change",async e=>{
+  const input=e.target,file=input.files[0],target=input.dataset.target;
+  if(!file||pending)return;
+  pending=true;
+  try{
+    if(file.size>256*1024*1024)throw Error("视频不能超过 256 MiB");
+    await flush();
+    const query=new URLSearchParams({id:p.id,revision:p.revision,target});
+    setState(await api("/shot-video?"+query,{method:"POST",headers:{"Content-Type":"video/mp4"},body:file}));
+    render();message(targetLabel(target)+"已导入，请播放并审核。");
+  }catch(err){message(err.message,true);}finally{pending=false;input.value="";}
 });
 $("#upload").addEventListener("change",async e=>{
   const file=e.target.files[0];if(!file)return;

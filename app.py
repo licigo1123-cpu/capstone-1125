@@ -6,6 +6,8 @@ import json
 import mimetypes
 import re
 import shutil
+import subprocess
+from pathlib import Path
 import tempfile
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
@@ -182,6 +184,34 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.guard()
             n = int(self.headers.get("Content-Length", 0))
+            if urlsplit(self.path).path == "/shot-video":
+                params = parse_qs(urlsplit(self.path).query)
+                pid, target, revision = (params[k][0] for k in ("id","target","revision"))
+                if not re.fullmatch(r"S0[1-6]\.video",target) or not 0 < n <= 256*1024**2:
+                    raise ValueError("请选择分镜和不超过 256 MiB 的 MP4 视频")
+                with tempfile.TemporaryDirectory(dir=st.DATA) as td:
+                    path = Path(td)/"clip.mp4"
+                    with path.open("wb") as out:
+                        while n:
+                            chunk = self.rfile.read(min(n,1024**2))
+                            if not chunk: raise ValueError("视频上传中断")
+                            out.write(chunk)
+                            n -= len(chunk)
+                    with path.open("rb") as src:
+                        if src.read(8)[4:] != b"ftyp": raise ValueError("需要 MP4 视频文件")
+                    check = subprocess.run([providers.FF,"-nostdin","-v","error","-protocol_whitelist","file","-f","mov","-i",str(path),"-map","0:V:0","-frames:v","1","-f","framehash","-"],capture_output=True,timeout=30)
+                    if check.returncode or not re.search(rb"(?m)^0,",check.stdout):
+                        raise ValueError("无法读取视频画面，请导入可播放的 MP4")
+                    with st.db() as c:
+                        c.execute("BEGIN IMMEDIATE")
+                        p = st.get(c,pid)
+                        wf.allowed(p,target)
+                        if p["revision"] != int(revision): raise ValueError("项目已更新，请刷新后重试")
+                        if c.execute("SELECT 1 FROM jobs WHERE project=? AND status IN ('制作中','排队中')",(pid,)).fetchone(): raise ValueError("请等待当前任务完成后导入")
+                        p["nodes"].setdefault(target,{"versions":[]})["versions"].append(dict(value=st.persist(path,"mp4"),inputs={},imported=True,style=p.get("style",wf.DEFAULT_STYLE),at=wf.now(),source="手动导入",note="",review="待审核",reviews=[],prompt=None))
+                        st.save(c,p)
+                        result=state(c,pid)
+                return self.reply(result)
             if self.path == "/import" and 0 < n <= 2**31:
                 with tempfile.TemporaryFile() as f:
                     while n:

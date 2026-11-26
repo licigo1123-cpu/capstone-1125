@@ -90,3 +90,5 @@ python3 -m unittest discover -s tests -v
 ```
 
 测试使用临时数据目录。文本和生图、生视频由测试替身提供，拼接使用真实 FFmpeg。覆盖分镜纠错、审核依赖、失效传播、单首帧传参、旧版尾帧历史兼容、项目包往返、密钥隔离、版本冲突、媒体范围读取和 1 分钟竖屏 MP4 的画幅与音轨。模型画质与角色一致性须用实际模型制作样片后人工审核。
+
+界面参考 [Awesome Design](https://github.com/gztchan/awesome-design) 收录的 Material Design Palette。分镜视频卡支持导入本地 MP4（最大 256 MiB），作为独立的待审核版本，可预览、回退和参与成片导出。

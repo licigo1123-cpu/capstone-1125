@@ -2,12 +2,13 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>纸幕 · 漫剧制作台</title><link rel="stylesheet" href="/style.css"><script src="/ui.js" defer></script>
+<title>漫剧制作台</title><link rel="stylesheet" href="/style.css"><script src="/ui.js" defer></script>
 </head>
 <body>
-<header><div class="brand"><span class="mark" aria-hidden="true">◩</span>纸幕 <small>漫剧制作台</small></div>
+<header><div class="brand"><span class="mark" aria-hidden="true">◩</span>漫剧制作台</div>
 <div class="toolbar"><button data-a="settings">连接设置</button><button data-a="import">导入项目</button><button data-a="projects">历史项目</button><button class="primary" data-a="save">保存项目</button></div></header>
 <input type="file" id="upload" accept=".zip" hidden>
+<input type="file" id="shot-upload" accept=".mp4,video/mp4" hidden>
 <div class="layout"><aside><div id="flow-panel" class="flow-panel"><button type="button" id="flow-handle" class="flow-handle" aria-label="上下拖动调整制作流程位置，也可使用上下方向键"><b>制作流程</b><small>上下拖动调整位置</small></button><nav id="steps" aria-label="制作步骤"></nav><div class="format"><b>9:16</b> 竖屏漫剧<br><small>目标片长约 1 分钟</small></div></div></aside>
 <main><div class="meta"><input aria-label="项目名称" id="title" maxlength="120"><span id="count"></span></div>
 <section id="work"></section></main></div>

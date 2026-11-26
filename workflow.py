@@ -183,6 +183,8 @@ def stamps(p, key):
 def inputs_match(p, key, snapshot):
     saved = snapshot["inputs"]
     expected = set(dependencies(p, key))
+    if key.endswith(".video") and snapshot.get("imported") is True:
+        return not saved
     # Keep the actual provenance of videos made by the former two-frame workflow.
     legacy = expected | {key.split(".")[0] + ".last"} if key.endswith(".video") else expected
     if set(saved) not in (expected, legacy):
@@ -227,7 +229,9 @@ def version(p, k, v, note="", source="手动", prompt=None):
 
 def review(p, k, approve, note):
     k = environment_key(p, k)
-    ready(p, k)
+    allowed(p, k)
+    if not (k.endswith(".video") and p["nodes"].get(k, {}).get("versions", [{}])[-1].get("imported")):
+        ready(p, k)
     if k not in p["nodes"] or status(p, k) == "上游已变更":
         raise ValueError("请先按当前输入制作新版本")
     v = p["nodes"][k]["versions"][-1]
