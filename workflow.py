@@ -39,8 +39,8 @@ def words(s):
 def clean(kind, v):
     if kind == "scene":
         row = {k: words(v[k]) for k in ("place", "time", "plot", "first", "last")}
-        if row["time"] not in TIMES or type(v["seconds"]) is not int or not 10 <= v["seconds"] <= 15:
-            raise ValueError("时段应为白天、黄昏或夜晚，每镜时长为 10–15 整秒")
+        if row["time"] not in TIMES or type(v["seconds"]) is not int or not 4 <= v["seconds"] <= 15:
+            raise ValueError("时段应为白天、黄昏或夜晚，每镜时长为 4–15 整秒")
         return dict(row, seconds=v["seconds"])
     if kind in ("cast", "dialogue"):
         if not isinstance(v, list):
@@ -256,10 +256,10 @@ def install_plan(p, obj):
     if p["shots"]:
         raise ValueError("已有分镜，请在新项目中重新拆镜")
     rows = obj["shots"]
-    if not isinstance(rows, list) or not 4 <= len(rows) <= 6:
-        raise ValueError("分镜数应为 4–6")
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 15:
+        raise ValueError("分镜数应为 1–15")
     validated = [{f: clean(f, row[f]) for f in FIELDS} for row in rows]
-    if sum(row["scene"]["seconds"] for row in validated) != 60:
+    if len(rows) >= 4 and sum(row["scene"]["seconds"] for row in validated) != 60:
         raise ValueError("分镜时长总和应为 60 秒")
     for i, row in enumerate(validated, 1):
         s = f"S{i:02}"

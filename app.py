@@ -187,7 +187,7 @@ class Handler(BaseHTTPRequestHandler):
             if urlsplit(self.path).path == "/shot-video":
                 params = parse_qs(urlsplit(self.path).query)
                 pid, target, revision = (params[k][0] for k in ("id","target","revision"))
-                if not re.fullmatch(r"S0[1-6]\.video",target) or not 0 < n <= 256*1024**2:
+                if not re.fullmatch(r"S[0-9]{2}\.video",target) or not 0 < n <= 256*1024**2:
                     raise ValueError("请选择分镜和不超过 256 MiB 的 MP4 视频")
                 with tempfile.TemporaryDirectory(dir=st.DATA) as td:
                     path = Path(td)/"clip.mp4"

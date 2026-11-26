@@ -2,12 +2,12 @@
 import re
 
 
-INSTRUCTION = """你是竖屏漫剧导演。用户消息就是待改编的故事原文。完整保留起因、转折和结局，按剧情进展或场景变化分成4至6镜，角色名称始终一致。
+INSTRUCTION = """你是竖屏漫剧导演。用户消息就是待改编的故事原文。完整保留起因、转折和结局，先分析场景切换、关键动作和情绪转折，再自行决定镜头数。一个连续动作可以只用一镜，复杂段落可以多镜展开，不要为了凑数重复画面。角色名称始终一致。
 只输出下面八列的中文表格，每镜一行，列间使用 |，单元格内不要换行或使用 |。不要输出 JSON 或解释。
 镜号 | 地点 | 时段 | 出镜角色 | 动作与运镜 | 开始画面 | 结束画面 | 对白
 镜号从1连续递增。时段只选白天、黄昏、夜晚。动物也是角色，角色名用顿号分隔，空镜写无。
 动作与运镜写连续可见动作和景别，开始画面和结束画面分别写动作起止时的姿态与空间位置，不写台词。
-对白写“角色：原话”，多句用“；角色：原话”连接，无对白写无。每镜对应10至15秒，总时长由程序分配为60秒。
+对白写“角色：原话”，多句用“；角色：原话”连接，无对白写无。目标片长约一分钟，每镜4至15秒，最多15镜。简单故事可少于4镜。
 """
 EMPTY = {"", "无", "无对白", "无角色", "空镜", "—", "-"}
 QUOTES = [("“", "”"), ('"', '"'), ("「", "」"), ("‘", "’"), ("'", "'")]
@@ -76,8 +76,9 @@ def parse(reply):
         shots.append(dict(scene=dict(place=place, time=period, plot=plot, first=first, last=last),
                           cast=[] if cast in EMPTY else [v.strip() for v in re.split(r"[、,，；;]", cast) if v.strip()],
                           dialogue=lines))
-    if not 4 <= len(shots) <= 6:
-        raise ValueError(f"分镜表需要 4–6 镜，收到 {len(shots)} 镜")
-    for shot in shots:
-        shot["scene"]["seconds"] = 60 // len(shots)
+    if not 1 <= len(shots) <= 15:
+        raise ValueError(f"分镜表需要 1–15 镜，收到 {len(shots)} 镜")
+    seconds, remainder = divmod(min(60, 15 * len(shots)), len(shots))
+    for index, shot in enumerate(shots):
+        shot["scene"]["seconds"] = seconds + int(index < remainder)
     return {"shots": shots}

@@ -141,7 +141,7 @@ function render(){
       <p class="hint">用于角色三视图、场景图、首帧关键帧和视频。修改风格后，相关已有素材需重新制作。</p><div class="actions">${button("保存风格","save-style")}</div></section>
       <section class="card"><h2>剧本原文</h2><textarea class="story" id="story" aria-label="剧本原文" ${p.shots.length?"readonly":""} placeholder="粘贴故事或小说原文……">${esc(edits.get("story")??p.story)}</textarea>
       <div class="actions">${p.shots.length?`<a class="button" download="storyboard.json" href="/storyboard?id=${p.id}">下载分镜与对白 JSON</a>`:button("拆分为分镜","generate","plan",true)}
-      <small>每镜 10–15 秒</small></div></section>`+
+      <small>按剧情自动决定分镜数 · 每镜 4–15 秒</small></div></section>`+
       p.shots.map(s=>`<article class="card">${head(s)}<div class="group">${["scene","cast","dialogue"].map(f=>panel(s+"."+f)).join("")}</div></article>`).join("");
   }else if(!p.shots.length){
     content='<div class="empty">先在「剧本分镜」输入故事并拆镜。</div>';

@@ -108,7 +108,7 @@ def validate(p):
     wf.words(p.get("style", wf.DEFAULT_STYLE))
     if not isinstance(p["story"], str) or not isinstance(p["shots"], list) or not isinstance(p["nodes"], dict):
         raise ValueError("项目结构不完整")
-    if len(p["shots"]) not in (0, 4, 5, 6) or p["shots"] != [f"S{i+1:02}" for i in range(len(p["shots"]))]:
+    if len(p["shots"]) > 15 or p["shots"] != [f"S{i+1:02}" for i in range(len(p["shots"]))]:
         raise ValueError("无效分镜顺序")
     links = p.get("scene_sources", {})
     if not isinstance(links, dict) or any(s not in p["shots"] or source not in p["shots"] for s, source in links.items()):
@@ -118,7 +118,7 @@ def validate(p):
             if s + "." + field not in p["nodes"]:
                 raise ValueError("缺少分镜字段")
     for k, n in p["nodes"].items():
-        if not re.fullmatch(r"(S0[1-6]\.(scene|cast|dialogue|environment|plate|first|last|video)|[0-9a-f]{24}\.(profile|sheet)|final\.film)", k):
+        if not re.fullmatch(r"(S[0-9]{2}\.(scene|cast|dialogue|environment|plate|first|last|video)|[0-9a-f]{24}\.(profile|sheet)|final\.film)", k):
             raise ValueError("无效节点标识")
         if k.startswith("S") and k.split(".")[0] not in p["shots"]:
             raise ValueError("镜头不存在")

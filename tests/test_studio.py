@@ -167,11 +167,13 @@ class StudioTests(unittest.TestCase):
         st.validate(p)
 
     def test_table_lengths_and_invalid_rows(self):
-        for count in (4,5,6):
+        for count in range(1,16):
             p=wf.new()
             wf.install_plan(p,storyboard.parse(self.shot_table(count)))
-            self.assertEqual(sum(wf.value(p,s+".scene")["seconds"] for s in p["shots"]),60)
-        for text in (self.shot_table(3),self.shot_table().replace("| 2 |","| 3 |"),
+            self.assertEqual(len(p["shots"]),count)
+            st.validate(p)
+            self.assertEqual(sum(wf.value(p,s+".scene")["seconds"] for s in p["shots"]),min(60,15*count))
+        for text in (self.shot_table(0),self.shot_table(16),self.shot_table().replace("| 2 |","| 3 |"),
                      self.shot_table().replace("门边蹲坐 |", "门边 | 蹲坐 |")):
             self.assertRaises(ValueError,storyboard.parse,text)
 
