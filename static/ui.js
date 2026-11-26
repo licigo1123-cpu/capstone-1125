@@ -95,10 +95,10 @@ function panel(key) {
   const actions=[];
   if(textual) actions.push(button("保存编辑","edit",key));
   if(kind==="profile"||kind==="environment") {
-    if(kind==="video") actions.push(button("手动导入 MP4","shot-import",key));
-  if(v) actions.push(button("按建议修改","generate",key));
+    if(v) actions.push(button("按建议修改","generate",key));
   }else if(!["scene","cast","dialogue"].includes(kind)) actions.push(button(v?"按当前输入重做":"生成"+labels[kind],"generate",key,!v));
   else actions.push(button("按建议修改","generate",key));
+  if(kind==="video") actions.push(button("手动导入视频（MP4）","shot-import",key));
   if(v) actions.push(button("审核通过","approve",key),button("退回修改","reject",key),button("历史版本 · "+node.versions.length,"versions",key));
   return `<section class="card ${kind}"><div class="caption"><h3>${labels[kind]}</h3><span class="badge">${esc(node?.status||"待制作")}</span></div>
   ${kind==="profile"?`<div class="actions">${button(v?"重新自动生成":"自动生成初版","generate",key,true)}</div><p class="hint">根据该角色出场的已确认分镜生成描述，可继续手动编辑。</p>`:""}
